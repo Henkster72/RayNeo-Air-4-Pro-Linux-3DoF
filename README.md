@@ -91,7 +91,7 @@ Now test the movement:
 - Press `C` to capture the desktop immediately after changing windows.
 - Press `Esc` to quit.
 
-The mouse pointer is included in the live desktop capture. It remains attached to its real desktop position while you look around; it does not move because of head rotation.
+The captured image deliberately excludes the mouse pointer. Wayland already draws the real compositor pointer, and including a second captured pointer would show two cursors. Pointer routing into the synthetic canvas is not implemented yet.
 
 Do not use `SDL_VIDEODRIVER=x11` in a Wayland session. Xwayland may put the viewport on the Samsung monitor instead of the RayNeo.
 
@@ -200,6 +200,7 @@ Controls:
 - Live capture currently refreshes through repeated Spectacle screenshots, not a continuous PipeWire/KDE screencopy stream. This gives live updates but lower frame rate and higher CPU use than a native stream.
 - The extra visual monitor currently duplicates the captured Samsung region rather than providing an independent workspace.
 - The viewport does not yet route keyboard or mouse input to a synthetic monitor region.
+- The extra visual region is not a real Wayland/KDE output and cannot host application windows.
 - Orientation is gyro-based and can drift during long sessions.
 - Pitch and yaw sensitivity are currently tuned for the tested Samsung M7 / RayNeo setup.
 - No positional 6DoF tracking is implemented.
