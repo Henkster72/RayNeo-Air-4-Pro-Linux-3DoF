@@ -91,6 +91,8 @@ Now test the movement:
 - Press `C` to capture the desktop immediately after changing windows.
 - Press `Esc` to quit.
 
+`Ctrl+C` in the terminal also exits cleanly.
+
 The captured image deliberately excludes the mouse pointer. Wayland already draws the real compositor pointer, and including a second captured pointer would show two cursors. Pointer routing into the synthetic canvas is not implemented yet.
 
 Do not use `SDL_VIDEODRIVER=x11` in a Wayland session. Xwayland may put the viewport on the Samsung monitor instead of the RayNeo.
