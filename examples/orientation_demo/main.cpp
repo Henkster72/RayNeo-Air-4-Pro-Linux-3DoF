@@ -20,9 +20,12 @@
 
 struct Orientation
 {
-    // Simple fused orientation from integrating gyro only (drift!)
-    // We'll keep Euler angles in radians.
     float yaw{0}, pitch{0}, roll{0};
+};
+
+struct Quaternion
+{
+    float w{1}, x{0}, y{0}, z{0};
 };
 
 struct RenderToggles
@@ -46,6 +49,9 @@ struct FusionState
     bool calibrated = false;
     float gyroBias[3]{0, 0, 0};
     int calibSamples = 0;
+    uint32_t lastTick = 0;
+    int stillSamples = 0;
+    Quaternion orientation{};
     bool gyroOnly = false; // ignore magnet correction entirely
 };
 struct AccelCalState
@@ -174,21 +180,90 @@ static void drawGlassesModel()
 
 static void applyOrientation(const Orientation &o)
 {
-    glRotatef(o.yaw * 57.2958f, 0, 0, 1);
-    glRotatef(o.pitch * 57.2958f, 0, 1, 0);
-    glRotatef(o.roll * 57.2958f, 1, 0, 0);
+    // Air 4 Pro frame: X=right, Y=up, Z=forward.
+    glRotatef(o.yaw * 57.2958f, 0, 1, 0);
+    glRotatef(o.pitch * 57.2958f, 1, 0, 0);
+    glRotatef(o.roll * 57.2958f, 0, 0, 1);
+}
+
+static constexpr float kStationaryGyroDps = 4.0f;
+static constexpr float kGyroDeadzoneDps = 1.0f;
+static constexpr float kImuTickSeconds = 0.0001f; // Air 4 Pro tick clock: 10 kHz.
+
+static float gyroMagnitudeDps(const RAYNEO_ImuSample &s)
+{
+    return sqrtf(s.gyroDps[0] * s.gyroDps[0] +
+                 s.gyroDps[1] * s.gyroDps[1] +
+                 s.gyroDps[2] * s.gyroDps[2]);
+}
+
+static Quaternion multiply(const Quaternion &a, const Quaternion &b)
+{
+    return {
+        a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+        a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+        a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+        a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w};
+}
+
+static void normalize(Quaternion &q)
+{
+    float length = sqrtf(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
+    if (length > 1e-6f)
+    {
+        q.w /= length;
+        q.x /= length;
+        q.y /= length;
+        q.z /= length;
+    }
+}
+
+static void updateEuler(const Quaternion &q, Orientation &o)
+{
+    // Extract yaw(Y), pitch(X), roll(Z) from R = Ry(yaw) Rx(pitch) Rz(roll).
+    const float r02 = 2.0f * (q.x * q.z + q.w * q.y);
+    const float r10 = 2.0f * (q.x * q.y + q.w * q.z);
+    const float r11 = 1.0f - 2.0f * (q.x * q.x + q.z * q.z);
+    const float r12 = 2.0f * (q.y * q.z - q.w * q.x);
+    const float r22 = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
+    o.yaw = atan2f(r02, r22);
+    o.pitch = asinf(std::max(-1.0f, std::min(1.0f, -r12)));
+    o.roll = atan2f(r10, r11);
 }
 
 static void fuseImu(Orientation &o, FusionState &f, const RAYNEO_ImuSample &s, float dt)
 {
     if (!s.valid)
         return;
-    float gx = (s.gyroDps[0] - (f.calibrated ? f.gyroBias[0] : 0.f)) * 0.0174532925f;
-    float gy = (s.gyroDps[1] - (f.calibrated ? f.gyroBias[1] : 0.f)) * 0.0174532925f;
-    float gz = (s.gyroDps[2] - (f.calibrated ? f.gyroBias[2] : 0.f)) * 0.0174532925f;
-    o.yaw += gz * dt;
-    o.pitch += gy * dt;
-    o.roll += gx * dt;
+    float corrected[3];
+    float rawMagnitude = gyroMagnitudeDps(s);
+    if (rawMagnitude < kStationaryGyroDps)
+    {
+        ++f.stillSamples;
+        if (f.stillSamples > 250)
+        {
+            for (int i = 0; i < 3; ++i)
+                f.gyroBias[i] = f.gyroBias[i] * 0.999f + s.gyroDps[i] * 0.001f;
+        }
+    }
+    else
+    {
+        f.stillSamples = 0;
+    }
+    for (int i = 0; i < 3; ++i)
+    {
+        corrected[i] = s.gyroDps[i] - f.gyroBias[i];
+        if (f.stillSamples > 250 || fabsf(corrected[i]) < kGyroDeadzoneDps)
+            corrected[i] = 0.0f;
+    }
+    float gx = corrected[0] * 0.0174532925f;
+    float gy = corrected[1] * 0.0174532925f;
+    float gz = corrected[2] * 0.0174532925f;
+    // Air 4 Pro axes: X=pitch, Y=yaw, Z=roll.
+    Quaternion delta{1.0f, 0.5f * gx * dt, 0.5f * gy * dt, 0.5f * gz * dt};
+    f.orientation = multiply(f.orientation, delta);
+    normalize(f.orientation);
+    updateEuler(f.orientation, o);
 }
 
 static void drawAxes(const Orientation &o)
@@ -198,9 +273,16 @@ static void drawAxes(const Orientation &o)
     float cr = cosf(o.roll), sr = sinf(o.roll);
     auto rotate = [&](float x, float y, float z)
     {
-        float x1=x; float y1= y*cr - z*sr; float z1= y*sr + z*cr;
-        float x2= x1*cp + z1*sp; float y2=y1; float z2= -x1*sp + z1*cp;
-        float x3= x2*cy - y2*sy; float y3= x2*sy + y2*cy; float z3=z2;
+        // Apply roll around Z, pitch around X, then yaw around Y.
+        float x1 = x * cr - y * sr;
+        float y1 = x * sr + y * cr;
+        float z1 = z;
+        float x2 = x1;
+        float y2 = y1 * cp - z1 * sp;
+        float z2 = y1 * sp + z1 * cp;
+        float x3 = x2 * cy + z2 * sy;
+        float y3 = y2;
+        float z3 = -x2 * sy + z2 * cy;
         return std::array<float,3>{x3,y3,z3}; };
     glBegin(GL_LINES);
     auto X = rotate(1, 0, 0);
@@ -266,14 +348,15 @@ int main()
         std::this_thread::sleep_for(std::chrono::seconds(5));
         return 1;
     }
-    Rayneo_EnableImu(ctx);
+    auto imuRc = Rayneo_EnableImu(ctx);
+    printf("Enable IMU: %s\n", Rayneo_ResultToString(imuRc));
 
     Orientation orient{};
     FusionState fusion{};
     MagnetFusionState magFusion{};
     PositionState motion{};
     AccelCalState accCal{};
-    auto lastTime = std::chrono::steady_clock::now();
+    uint64_t imuCount = 0;
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
@@ -451,6 +534,10 @@ int main()
                     fusion.calibrated = false;
                     fusion.calibSamples = 0;
                     fusion.gyroBias[0] = fusion.gyroBias[1] = fusion.gyroBias[2] = 0;
+                    fusion.lastTick = 0;
+                    fusion.stillSamples = 0;
+                    fusion.orientation = Quaternion{};
+                    printf("Orientation recenter started; hold still for 1 second\n");
                     break;
                 case SDLK_f:
                     motion.enable = !motion.enable;
@@ -476,18 +563,38 @@ int main()
         {
             if (evt.type == RAYNEO_EVENT_IMU_SAMPLE)
             {
-                auto now = std::chrono::steady_clock::now();
-                float dt = std::chrono::duration<float>(now - lastTime).count();
-                lastTime = now;
+                ++imuCount;
                 if (!fusion.calibrated)
                 {
+                    if (gyroMagnitudeDps(evt.data.imu) >= kStationaryGyroDps)
+                    {
+                        fusion.calibSamples = 0;
+                        fusion.gyroBias[0] = fusion.gyroBias[1] = fusion.gyroBias[2] = 0;
+                        fusion.lastTick = evt.data.imu.tick;
+                        continue;
+                    }
                     fusion.gyroBias[0] = (fusion.gyroBias[0] * fusion.calibSamples + evt.data.imu.gyroDps[0]) / (fusion.calibSamples + 1);
                     fusion.gyroBias[1] = (fusion.gyroBias[1] * fusion.calibSamples + evt.data.imu.gyroDps[1]) / (fusion.calibSamples + 1);
                     fusion.gyroBias[2] = (fusion.gyroBias[2] * fusion.calibSamples + evt.data.imu.gyroDps[2]) / (fusion.calibSamples + 1);
                     fusion.calibSamples++;
-                    if (fusion.calibSamples > 300)
+                    fusion.lastTick = evt.data.imu.tick;
+                    if (fusion.calibSamples >= 500)
+                    {
                         fusion.calibrated = true;
+                        orient = Orientation{};
+                        fusion.orientation = Quaternion{};
+                        printf("Gyro calibrated; orientation tracking enabled\n");
+                    }
+                    continue;
                 }
+                float dt = 0.002f;
+                if (fusion.lastTick != 0 && evt.data.imu.tick > fusion.lastTick)
+                {
+                    float tickDt = (evt.data.imu.tick - fusion.lastTick) * kImuTickSeconds;
+                    if (tickDt > 0.0001f && tickDt < 0.1f)
+                        dt = tickDt;
+                }
+                fusion.lastTick = evt.data.imu.tick;
                 if (!magFusion.magnetOnly)
                 {
                     fuseImu(orient, fusion, evt.data.imu, dt);
@@ -590,6 +697,10 @@ int main()
                     if (accHistory.size() > MAX_HISTORY)
                         accHistory.erase(accHistory.begin(), accHistory.begin() + (accHistory.size() - MAX_HISTORY));
                 }
+                if (imuCount <= 5 || (imuCount % 50) == 0)
+                    printf("Orientation #%llu yaw=%.1f pitch=%.1f roll=%.1f deg\n",
+                           (unsigned long long)imuCount, orient.yaw * 57.2958f,
+                           orient.pitch * 57.2958f, orient.roll * 57.2958f);
             }
             else if (evt.type == RAYNEO_EVENT_DEVICE_DETACHED)
             {
@@ -933,6 +1044,7 @@ int main()
     SDL_GL_DeleteContext(glctx);
     SDL_DestroyWindow(window);
     SDL_Quit();
-    // Rayneo_Destroy(ctx);
+    Rayneo_DisableImu(ctx);
+    Rayneo_Destroy(ctx);
     return 0;
 }

@@ -40,23 +40,25 @@ int main() {
     }
 
     // Включаем IMU и запрашиваем информацию об устройстве.
-    Rayneo_EnableImu(ctx);
-    Rayneo_DisplaySet3D(ctx);
-    Rayneo_RequestDeviceInfo(ctx);
+    std::cout << "Enable IMU: " << Rayneo_ResultToString(Rayneo_EnableImu(ctx)) << "\n";
+    std::cout << "Request device info: " << Rayneo_ResultToString(Rayneo_RequestDeviceInfo(ctx)) << "\n";
 
     auto start = std::chrono::steady_clock::now();
+    uint64_t imuCount = 0;
     while (true) {
         RAYNEO_Event evt{};
         auto rc = Rayneo_PollEvent(ctx, &evt, 500); // ждём события до 500мс
         if (rc == RAYNEO_OK) {
             if (evt.type == RAYNEO_EVENT_IMU_SAMPLE) {
-                // std::cout << "IMU tick=" << evt.data.imu.tick
-                //           << " acc=" << evt.data.imu.acc[0] << "," << evt.data.imu.acc[1] << "," << evt.data.imu.acc[2]
-                //           << " gyro(dps)=" << evt.data.imu.gyroDps[0] << "," << evt.data.imu.gyroDps[1] << "," << evt.data.imu.gyroDps[2]
-                //           << " temp=" << evt.data.imu.temperature
-                //           << " psensor=" << evt.data.imu.psensor
-                //           << " lsensor=" << evt.data.imu.lsensor
-                //           << std::endl;
+                ++imuCount;
+                if (imuCount <= 5 || (imuCount % 50) == 0) {
+                    const auto &s = evt.data.imu;
+                    std::cout << "IMU #" << imuCount << " tick=" << s.tick
+                              << " acc=" << s.acc[0] << "," << s.acc[1] << "," << s.acc[2]
+                              << " gyro(dps)=" << s.gyroDps[0] << "," << s.gyroDps[1] << "," << s.gyroDps[2]
+                              << " mag=" << s.magnet[0] << "," << s.magnet[1] << "," << s.magnet[2]
+                              << std::endl;
+                }
             } else if (evt.type == RAYNEO_EVENT_DEVICE_INFO) {
                 const auto &d = evt.data.info;
                 std::cout << "DeviceInfo:\n"

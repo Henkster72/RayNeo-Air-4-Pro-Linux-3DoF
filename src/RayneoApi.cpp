@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstdarg>
+#include <memory>
 
 #ifdef __APPLE__
 #include <IOKit/hid/IOHIDManager.h>
@@ -57,6 +58,7 @@ struct RayneoContext__
     bool hasInterrupt{false};
     // async interrupt transfer state
     libusb_transfer *inTransfer{nullptr};
+    std::unique_ptr<std::vector<uint8_t>> inBuffer;
     std::atomic<bool> transferActive{false};
     std::atomic<bool> transferDone{false};
     std::atomic<bool> transferResubmit{false};
@@ -943,8 +945,8 @@ RAYNEO_Result Rayneo_Start(RAYNEO_Context ctx, uint32_t /*serviceFlags*/)
         };
         size_t inSize = ctx->epInMaxPacket ? ctx->epInMaxPacket : 64;
         if (inSize < 64) inSize = 64;
-        auto bufferHolder = std::make_unique<std::vector<uint8_t>>(inSize); // freed on worker exit
-        libusb_fill_interrupt_transfer(ctx->inTransfer, ctx->handle, ctx->epIn, bufferHolder->data(), (int)inSize, transferCallback, ctx, 0);
+        ctx->inBuffer = std::make_unique<std::vector<uint8_t>>(inSize);
+        libusb_fill_interrupt_transfer(ctx->inTransfer, ctx->handle, ctx->epIn, ctx->inBuffer->data(), (int)inSize, transferCallback, ctx, 0);
         ctx->transferActive.store(true);
         ctx->transferDone.store(false);
         ctx->transferResubmit.store(true);
@@ -1005,6 +1007,7 @@ RAYNEO_Result Rayneo_Stop(RAYNEO_Context ctx)
             libusb_free_transfer(ctx->inTransfer);
             ctx->inTransfer = nullptr;
         }
+        ctx->inBuffer.reset();
         if (ctx->handle && ctx->interfaceNumber >= 0)
             libusb_release_interface(ctx->handle, ctx->interfaceNumber);
         if (ctx->handle)
