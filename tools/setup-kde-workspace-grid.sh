@@ -7,6 +7,7 @@ if ! command -v qdbus6 >/dev/null 2>&1 || ! command -v gdbus >/dev/null 2>&1; th
 fi
 
 manager=(qdbus6 org.kde.KWin /VirtualDesktopManager)
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 read_count() {
     "${manager[@]}" count | grep -oE '[0-9]+' | tail -n 1
@@ -63,6 +64,8 @@ else
     echo "For another existing layout, configure the center workspace manually." >&2
     exit 2
 fi
+
+"$script_dir/enable-rayneo-kwin-sticky.sh"
 
 gdbus call --session \
     --dest org.kde.KWin \

@@ -144,12 +144,14 @@ RayNeo output are underneath the viewport. Put the Chrome/YouTube window on
 the Samsung side of the KDE workspace you want to visit; head movement then
 switches the KDE workspace and the RayNeo viewport shows that workspace.
 
-Before starting the program, add a KDE Window Rule for the window title
-`RayNeo pinned viewport` and set its Virtual Desktops property to `All
-Desktops`. This keeps the RayNeo viewport visible while KWin changes the
-workspace on the Samsung display. In Plasma, open System Settings → Window
-Management → Window Rules → Add New, match the title, then set Virtual
-Desktops to `All Desktops`.
+The setup script also enables the included KWin integration. It automatically
+puts the `RayNeo pinned viewport` window on all desktops, so the viewport stays
+visible while KWin changes the workspace. If the grid is already configured,
+enable that part separately:
+
+```bash
+tools/enable-rayneo-kwin-sticky.sh
+```
 
 Start the workspace mode with:
 
