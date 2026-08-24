@@ -1,15 +1,18 @@
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <csignal>
 #include <utility>
 #include <vector>
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "rayneo_api.h"
@@ -44,18 +47,46 @@ static uint32_t readLe32(const uint8_t *p)
     return static_cast<uint32_t>(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
 }
 
+static volatile std::sig_atomic_t stopRequested = 0;
+
+static void handleStopSignal(int)
+{
+    stopRequested = 1;
+}
+
+static bool runSpectacle(const char *scope, const char *path)
+{
+    const pid_t child = fork();
+    if (child < 0)
+        return false;
+    if (child == 0)
+    {
+        execlp("spectacle", "spectacle", "--background", "--nonotify",
+               scope, "--output", path, static_cast<char *>(nullptr));
+        _exit(127);
+    }
+
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0)
+    {
+        if (errno != EINTR)
+            return false;
+        if (stopRequested)
+            kill(child, SIGTERM);
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 static bool captureDesktop(DesktopImage &image, const char *scope)
 {
     static std::atomic<unsigned long> sequence{0};
     char path[160];
     std::snprintf(path, sizeof(path), "/tmp/rayneo-pinned-%ld-%lu.bmp",
                   static_cast<long>(getpid()), sequence.fetch_add(1));
-    char command[320];
-    std::snprintf(command, sizeof(command),
-                  "spectacle --background --nonotify %s --output %s", scope, path);
-    if (std::system(command) != 0)
+    if (!runSpectacle(scope, path))
     {
-        std::printf("Desktop capture failed; is spectacle installed?\n");
+        if (!stopRequested)
+            std::printf("Desktop capture failed; is spectacle installed?\n");
         return false;
     }
 
@@ -308,6 +339,9 @@ static GLuint uploadDesktop(const DesktopImage &image)
 
 int main()
 {
+    std::signal(SIGINT, handleStopSignal);
+    std::signal(SIGTERM, handleStopSignal);
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
         std::printf("SDL init failed: %s\n", SDL_GetError());
@@ -432,7 +466,7 @@ int main()
     bool running = true;
     uint64_t samples = 0;
     double lastReport = 0;
-    while (running)
+    while (running && !stopRequested)
     {
         SDL_Event event{};
         while (SDL_PollEvent(&event))
