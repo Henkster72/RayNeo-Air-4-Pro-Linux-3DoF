@@ -586,7 +586,7 @@ int main(int argc, char **argv)
         if (kdeWorkspaceMode)
         {
             // Keep the same axis signs as the tested pinned viewport. The
-            // dominant axis selects one of the four cardinal workspaces.
+            // two head angles select one of the eight surrounding workspaces.
             const float horizontal = -yaw * 57.2958f;
             const float vertical = -tracker.orientation().pitch * 57.2958f;
             const float enterAngle = 18.0f;
@@ -594,10 +594,18 @@ int main(int argc, char **argv)
             int desiredSlot = workspaceSlot;
             if (workspaceSlot == 0)
             {
-                if (std::fabs(horizontal) >= std::fabs(vertical) &&
-                    std::fabs(horizontal) >= enterAngle)
+                const bool horizontalActive = std::fabs(horizontal) >= enterAngle;
+                const bool verticalActive = std::fabs(vertical) >= enterAngle;
+                if (horizontalActive && verticalActive)
+                {
+                    if (horizontal > 0)
+                        desiredSlot = vertical > 0 ? 7 : 5;
+                    else
+                        desiredSlot = vertical > 0 ? 8 : 6;
+                }
+                else if (horizontalActive && std::fabs(horizontal) >= std::fabs(vertical))
                     desiredSlot = horizontal > 0 ? 1 : 2;
-                else if (std::fabs(vertical) >= enterAngle)
+                else if (verticalActive)
                     desiredSlot = vertical > 0 ? 4 : 3;
             }
             else if (std::fabs(horizontal) < returnAngle &&
@@ -611,7 +619,7 @@ int main(int argc, char **argv)
                                       nowTicks - lastWorkspaceAttempt >= 1000;
             if (desiredSlot != workspaceSlot && retryAllowed)
             {
-                static const int desktopOffsets[] = {0, -1, 1, -3, 3};
+                static const int desktopOffsets[] = {0, -1, 1, -3, 3, -4, -2, 2, 4};
                 const int targetDesktop = centerDesktop + desktopOffsets[desiredSlot];
                 lastWorkspaceAttempt = nowTicks;
                 if (targetDesktop >= 1 && targetDesktop <= 9 &&

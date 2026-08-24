@@ -124,15 +124,15 @@ The repair option removes only workspaces whose names start with `RayNeo Grid`
 and rebuilds the corrected layout. For any other existing KDE workspace
 layout, the helper refuses to change it; configure that layout manually.
 
-The five positions used by the head tracker are:
+The nine positions used by the head tracker are:
 
 ```text
-             2  (above)
-4 (left)   5  (center)   6 (right)
-             8  (below)
+1 (upper-left)  2 (above)  3 (upper-right)
+4 (left)       5 (center) 6 (right)
+7 (lower-left) 8 (below)  9 (lower-right)
 ```
 
-The four corner workspaces are left available for normal KDE use. Put Chrome,
+All eight surrounding workspaces are selectable by head pose. Put Chrome,
 terminals, or other applications on the workspaces you want to use. Plasma
 keeps each workspace live; these are not copied screenshots.
 

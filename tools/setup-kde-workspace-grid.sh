@@ -84,5 +84,5 @@ The existing main workspace is now in the center:
   desktop 2: above
   desktop 8: below
 
-The four corner desktops are intentionally unused.
+All eight surrounding desktops are available to the head tracker, including diagonals.
 EOF
