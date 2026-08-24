@@ -384,17 +384,24 @@ int main(int argc, char **argv)
     std::signal(SIGTERM, handleStopSignal);
 
     bool kdeWorkspaceMode = false;
+    bool kdeTwoWorkspaceMode = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--kde-workspaces") == 0)
             kdeWorkspaceMode = true;
+        else if (std::strcmp(argv[i], "--kde-two-workspaces") == 0)
+            kdeTwoWorkspaceMode = true;
         else if (std::strcmp(argv[i], "--help") == 0)
         {
-            std::printf("Usage: %s [--kde-workspaces]\n", argv[0]);
-            std::printf("  --kde-workspaces  switch a 3x3 KDE workspace grid using head pose\n");
+            std::printf("Usage: %s [--kde-two-workspaces|--kde-workspaces]\n", argv[0]);
+            std::printf("  --kde-two-workspaces  switch Center/Right KDE workspaces\n");
+            std::printf("  --kde-workspaces       switch the advanced 3x3 KDE grid\n");
             return 0;
         }
     }
+
+    if (kdeTwoWorkspaceMode)
+        kdeWorkspaceMode = false;
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
@@ -518,7 +525,8 @@ int main(int argc, char **argv)
 
     Tracker tracker;
     const char *centerDesktopText = std::getenv("RAYNEO_KDE_CENTER_DESKTOP");
-    const int centerDesktop = centerDesktopText ? std::atoi(centerDesktopText) : 5;
+    const int centerDesktop = centerDesktopText ? std::atoi(centerDesktopText) :
+                               (kdeTwoWorkspaceMode ? 1 : 5);
     int workspaceSlot = 0;
     if (kdeWorkspaceMode)
     {
@@ -528,6 +536,9 @@ int main(int argc, char **argv)
                     centerDesktop - 1, centerDesktop + 1,
                     centerDesktop - 3, centerDesktop + 3);
     }
+    if (kdeTwoWorkspaceMode)
+        std::printf("KDE two-workspace mode enabled; center desktop %d, right desktop %d\n",
+                    centerDesktop, centerDesktop + 1);
     bool running = true;
     uint64_t samples = 0;
     double lastReport = 0;
@@ -583,7 +594,41 @@ int main(int argc, char **argv)
         const float yaw = tracker.orientation().yaw;
         float viewX = 0;
         float viewY = 0;
-        if (kdeWorkspaceMode)
+        if (kdeTwoWorkspaceMode)
+        {
+            const float horizontal = -yaw * 57.2958f;
+            const float enterAngle = 18.0f;
+            const float returnAngle = 10.0f;
+            int desiredSlot = workspaceSlot;
+            if (workspaceSlot == 0 && horizontal <= -enterAngle)
+                desiredSlot = 1;
+            else if (workspaceSlot == 1 && horizontal > -returnAngle)
+                desiredSlot = 0;
+
+            const uint32_t nowTicks = SDL_GetTicks();
+            const bool retryAllowed = desiredSlot != failedWorkspaceSlot ||
+                                      nowTicks - lastWorkspaceAttempt >= 1000;
+            if (desiredSlot != workspaceSlot && retryAllowed)
+            {
+                const int targetDesktop = centerDesktop + desiredSlot;
+                lastWorkspaceAttempt = nowTicks;
+                if ((targetDesktop == 1 || targetDesktop == 2) &&
+                    switchKdeDesktop(targetDesktop))
+                {
+                    workspaceSlot = desiredSlot;
+                    failedWorkspaceSlot = -1;
+                    std::printf("KDE workspace switched to %s (desktop %d)\n",
+                                workspaceSlot == 0 ? "Center" : "Right", targetDesktop);
+                }
+                else if (!stopRequested)
+                {
+                    failedWorkspaceSlot = desiredSlot;
+                    std::printf("Could not switch to KDE desktop %d; run tools/setup-kde-two-workspaces.sh first\n",
+                                targetDesktop);
+                }
+            }
+        }
+        else if (kdeWorkspaceMode)
         {
             // Keep the same axis signs as the tested pinned viewport. The
             // two head angles select one of the eight surrounding workspaces.
@@ -656,7 +701,7 @@ int main(int argc, char **argv)
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
         glTranslatef(-viewX, -viewY, 0);
-        if (kdeWorkspaceMode)
+        if (kdeWorkspaceMode || kdeTwoWorkspaceMode)
             drawCapturedScreen(desktopTexture, static_cast<float>(width),
                                static_cast<float>(desktop.width),
                                static_cast<float>(width), static_cast<float>(height));

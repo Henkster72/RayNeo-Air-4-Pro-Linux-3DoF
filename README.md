@@ -97,7 +97,34 @@ The captured image deliberately excludes the mouse pointer. Wayland already draw
 
 Do not use `SDL_VIDEODRIVER=x11` in a Wayland session. Xwayland may put the viewport on the Samsung monitor instead of the RayNeo.
 
-### 6. Use real KDE virtual desktops
+### 6. Recommended: one center workspace and one right workspace
+
+For the simplest useful setup, use only two KDE workspaces:
+
+```text
+Center = Samsung desktop content
+Right  = Chrome/YouTube content
+RayNeo = head-tracked viewer
+```
+
+Create that setup:
+
+```bash
+tools/setup-kde-two-workspaces.sh
+```
+
+Move Chrome to the Samsung output of the `Right` workspace. Then run:
+
+```bash
+SDL_VIDEODRIVER=wayland \
+  build/examples/pinned_viewport/RayNeoPinnedViewport --kde-two-workspaces
+```
+
+Keep your head centered during calibration. Looking right activates the live
+`Right` workspace; returning near center activates `Center`. This is a
+workspace switch, not a fake second physical monitor.
+
+### 7. Optional advanced 3x3 workspace grid
 
 The normal viewport above is a visual panning test. It does not create a real
 second monitor. For live KDE workspaces, first create a 3x3 Plasma workspace
@@ -193,7 +220,7 @@ is still a prototype and is slower than a native PipeWire stream. Mouse and
 keyboard routing from the RayNeo window into the active Samsung workspace is
 also not implemented yet.
 
-### 7. Optional: test the IMU first
+### 8. Optional: test the IMU first
 
 If you want to confirm the glasses before starting the viewport:
 
