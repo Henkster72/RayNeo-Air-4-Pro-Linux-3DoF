@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -6,6 +7,7 @@
 #include <cstdlib>
 #include <utility>
 #include <vector>
+#include <mutex>
 #include <thread>
 #include <chrono>
 #include <unistd.h>
@@ -42,13 +44,15 @@ static uint32_t readLe32(const uint8_t *p)
     return static_cast<uint32_t>(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
 }
 
-static bool captureDesktop(DesktopImage &image)
+static bool captureDesktop(DesktopImage &image, const char *scope)
 {
-    char path[128];
-    std::snprintf(path, sizeof(path), "/tmp/rayneo-pinned-%ld.bmp", static_cast<long>(getpid()));
-    char command[256];
+    static std::atomic<unsigned long> sequence{0};
+    char path[160];
+    std::snprintf(path, sizeof(path), "/tmp/rayneo-pinned-%ld-%lu.bmp",
+                  static_cast<long>(getpid()), sequence.fetch_add(1));
+    char command[320];
     std::snprintf(command, sizeof(command),
-                  "spectacle --background --nonotify --fullscreen --output %s", path);
+                  "spectacle --background --nonotify %s --output %s", scope, path);
     if (std::system(command) != 0)
     {
         std::printf("Desktop capture failed; is spectacle installed?\n");
@@ -119,9 +123,17 @@ static bool captureDesktop(DesktopImage &image)
             destination[x * 4 + 3] = 255;
         }
     }
-    std::printf("Captured desktop: %dx%d\n", image.width, image.height);
     return true;
 }
+
+struct LiveCapture
+{
+    std::mutex mutex;
+    DesktopImage pending;
+    bool ready{false};
+    std::atomic<bool> stop{false};
+    std::atomic<uint64_t> frames{0};
+};
 
 static Quaternion multiply(const Quaternion &a, const Quaternion &b)
 {
@@ -303,11 +315,12 @@ int main()
     }
 
     DesktopImage desktop;
-    if (!captureDesktop(desktop))
+    if (!captureDesktop(desktop, "--fullscreen"))
     {
         SDL_Quit();
         return 1;
     }
+    std::printf("Captured desktop: %dx%d\n", desktop.width, desktop.height);
 
     int targetDisplay = 0;
     const int displayCount = SDL_GetNumVideoDisplays();
@@ -347,8 +360,6 @@ int main()
         return 1;
     }
 
-    GLuint desktopTexture = uploadDesktop(desktop);
-
     RAYNEO_Context ctx{};
     if (Rayneo_Create(&ctx) != RAYNEO_OK ||
         Rayneo_SetTargetVidPid(ctx, 0x1BBB, 0xAF50) != RAYNEO_OK ||
@@ -366,6 +377,45 @@ int main()
 
     int width = 0, height = 0;
     SDL_GetWindowSize(window, &width, &height);
+    GLuint desktopTexture = uploadDesktop(desktop);
+
+    LiveCapture liveCapture;
+    std::thread liveCaptureThread([&]() {
+        std::printf("Live desktop capture started; updating the Samsung region\n");
+        while (!liveCapture.stop.load())
+        {
+            DesktopImage frame;
+            if (captureDesktop(frame, "--fullscreen"))
+            {
+                std::lock_guard<std::mutex> lock(liveCapture.mutex);
+                liveCapture.pending = std::move(frame);
+                liveCapture.ready = true;
+                ++liveCapture.frames;
+            }
+            else
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+    });
+
+    auto applyLiveFrame = [&](const DesktopImage &frame) {
+        if (frame.width < width || frame.height != height ||
+            desktop.width < width || desktop.height < height)
+            return;
+        for (int y = 0; y < height; ++y)
+        {
+            std::memcpy(desktop.pixels.data() + static_cast<size_t>(y) * desktop.width * 4,
+                        frame.pixels.data() + static_cast<size_t>(y) * frame.width * 4,
+                        static_cast<size_t>(width) * 4);
+        }
+        glBindTexture(GL_TEXTURE_2D, desktopTexture);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, desktop.width);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+                        GL_RGBA, GL_UNSIGNED_BYTE, desktop.pixels.data());
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    };
+
     const float extraMonitorWidth = static_cast<float>(width);
     const float desktopX = extraMonitorWidth;
     const float canvasWidth = desktopX + static_cast<float>(desktop.width);
@@ -394,21 +444,26 @@ int main()
                 tracker.recenter();
             else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_c)
             {
-                SDL_HideWindow(window);
-                SDL_Delay(100);
                 DesktopImage refreshed;
-                if (captureDesktop(refreshed))
+                if (captureDesktop(refreshed, "--fullscreen"))
                 {
-                    glDeleteTextures(1, &desktopTexture);
-                    desktop = std::move(refreshed);
-                    desktopTexture = uploadDesktop(desktop);
-                    std::printf("Desktop texture refreshed\n");
+                    applyLiveFrame(refreshed);
+                    std::printf("Live desktop frame refreshed\n");
                 }
-                SDL_ShowWindow(window);
-                SDL_SetWindowPosition(window, bounds.x, bounds.y);
-                SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
             }
         }
+
+        DesktopImage liveFrame;
+        {
+            std::lock_guard<std::mutex> lock(liveCapture.mutex);
+            if (liveCapture.ready)
+            {
+                liveFrame = std::move(liveCapture.pending);
+                liveCapture.ready = false;
+            }
+        }
+        if (!liveFrame.pixels.empty())
+            applyLiveFrame(liveFrame);
 
         RAYNEO_Event eventData{};
         while (Rayneo_PollEvent(ctx, &eventData, 0) == RAYNEO_OK)
@@ -448,8 +503,9 @@ int main()
         if (now - lastReport > 0.5)
         {
             const Orientation &o = tracker.orientation();
-            std::printf("viewport samples=%llu yaw=%.1f pitch=%.1f roll=%.1f viewX=%.0f viewY=%.0f calibrated=%s\n",
+            std::printf("viewport samples=%llu live=%llu yaw=%.1f pitch=%.1f roll=%.1f viewX=%.0f viewY=%.0f calibrated=%s\n",
                         static_cast<unsigned long long>(samples),
+                        static_cast<unsigned long long>(liveCapture.frames.load()),
                         o.yaw * 57.2958f, o.pitch * 57.2958f, o.roll * 57.2958f,
                         viewX, viewY, tracker.calibrated() ? "yes" : "no");
             lastReport = now;
@@ -457,6 +513,9 @@ int main()
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
+    liveCapture.stop.store(true);
+    if (liveCaptureThread.joinable())
+        liveCaptureThread.join();
     Rayneo_DisableImu(ctx);
     Rayneo_Destroy(ctx);
     glDeleteTextures(1, &desktopTexture);

@@ -74,7 +74,7 @@ Use the native Wayland backend:
 SDL_VIDEODRIVER=wayland build/examples/pinned_viewport/RayNeoPinnedViewport
 ```
 
-Important: the current viewport uses a desktop snapshot, not a live video stream. It captures the desktop when it starts, so moving video or newly opened windows will not update automatically. Press `C` to take a fresh snapshot.
+The viewport now refreshes the Samsung region in the background while it is running. The capture uses KDE Spectacle, so the refresh rate depends on the desktop and is lower than a native video stream. The RayNeo viewport stays visible while this happens.
 
 Keep the glasses still for the first second. The program will print:
 
@@ -88,7 +88,7 @@ Now test the movement:
 - Turn your head left and right: the desktop moves horizontally.
 - Look up and down: the finite virtual screen moves vertically and can leave view.
 - Press `R` and hold still for one second to recenter.
-- Press `C` to capture the desktop again after changing windows.
+- Press `C` to capture the desktop immediately after changing windows.
 - Press `Esc` to quit.
 
 Do not use `SDL_VIDEODRIVER=x11` in a Wayland session. Xwayland may put the viewport on the Samsung monitor instead of the RayNeo.
@@ -139,9 +139,9 @@ SDL_VIDEODRIVER=wayland
 
 The program should identify the RayNeo as `Technical Concepts Ltd SmartGlasses`. If KDE gives the output a different name, update the display-name match in `examples/pinned_viewport/main.cpp`.
 
-### The desktop image is old
+### The desktop image is old or updates slowly
 
-This is expected in version `v0.1`: the prototype captures a snapshot at startup rather than continuously streaming the desktop. Press `C` after changing windows or when a video frame needs updating. The viewport briefly hides while KDE takes the new screenshot.
+The prototype refreshes the Samsung region with repeated KDE Spectacle captures. This is live, but it is not yet a low-latency PipeWire video stream. Press `C` for an immediate refresh. The terminal's `live=` counter shows how many background frames have been captured.
 
 ### The image is dark above or below the screen
 
@@ -157,7 +157,7 @@ That is intentional when looking far up or down: the captured physical screen is
 - `R` recentering
 - Native Wayland output selection for the RayNeo display
 - A synthetic pinned viewport driven by head yaw and pitch
-- Real desktop capture through KDE Spectacle
+- Live Samsung-region refresh through KDE Spectacle
 - An additional virtual monitor region to the left of the captured Samsung display
 
 ## Tested setup
@@ -177,7 +177,7 @@ The RayNeo is connected as a normal DisplayPort monitor. The viewport selects th
 
 ## Viewport behavior
 
-At startup the application captures the complete desktop as a 5120×1440 image. It renders a larger virtual canvas:
+At startup the application captures the complete desktop as a 5120×1440 image. While running, the background capture refreshes the leftmost Samsung region of that image. It renders a larger virtual canvas:
 
 ```text
 [ duplicated Samsung region ][ captured Samsung ][ captured right-hand region ]
@@ -193,7 +193,7 @@ Controls:
 
 ## Current limitations
 
-- Desktop capture is a snapshot at startup. Press `C` to refresh it; it is not yet a continuous PipeWire/KDE screencopy stream.
+- Live capture currently refreshes through repeated Spectacle screenshots, not a continuous PipeWire/KDE screencopy stream. This gives live updates but lower frame rate and higher CPU use than a native stream.
 - The extra left monitor currently duplicates the captured Samsung region rather than providing an independent workspace.
 - Orientation is gyro-based and can drift during long sessions.
 - Pitch and yaw sensitivity are currently tuned for the tested Samsung M7 / RayNeo setup.
