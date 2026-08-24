@@ -20,16 +20,16 @@ read_desktops() {
 create_grid() {
     # Insert four workspaces before the user's existing desktop. This keeps
     # that desktop at position 5 instead of leaving it at the top-left.
-    "${manager[@]}" createDesktop 0 "RayNeo Corner NW" >/dev/null
-    "${manager[@]}" createDesktop 1 "RayNeo Above" >/dev/null
-    "${manager[@]}" createDesktop 2 "RayNeo Corner NE" >/dev/null
-    "${manager[@]}" createDesktop 3 "RayNeo Left" >/dev/null
+    "${manager[@]}" createDesktop 0 "Upper Left" >/dev/null
+    "${manager[@]}" createDesktop 1 "Above" >/dev/null
+    "${manager[@]}" createDesktop 2 "Upper Right" >/dev/null
+    "${manager[@]}" createDesktop 3 "Left" >/dev/null
 
     # Append the four workspaces after the user's existing center desktop.
-    "${manager[@]}" createDesktop 5 "RayNeo Right" >/dev/null
-    "${manager[@]}" createDesktop 6 "RayNeo Corner SW" >/dev/null
-    "${manager[@]}" createDesktop 7 "RayNeo Below" >/dev/null
-    "${manager[@]}" createDesktop 8 "RayNeo Corner SE" >/dev/null
+    "${manager[@]}" createDesktop 5 "Right" >/dev/null
+    "${manager[@]}" createDesktop 6 "Lower Left" >/dev/null
+    "${manager[@]}" createDesktop 7 "Below" >/dev/null
+    "${manager[@]}" createDesktop 8 "Lower Right" >/dev/null
 }
 
 count=$(read_count)

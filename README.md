@@ -132,16 +132,30 @@ The nine positions used by the head tracker are:
 7 (lower-left) 8 (below)  9 (lower-right)
 ```
 
+In KDE’s workspace list these are named `Upper Left`, `Above`, `Upper Right`,
+`Left`, `Center`, `Right`, `Lower Left`, `Below`, and `Lower Right`. They are
+workspaces, not separate RayNeo applications.
+
 All eight surrounding workspaces are selectable by head pose. Put Chrome,
 terminals, or other applications on the workspaces you want to use. Plasma
 keeps each workspace live; these are not copied screenshots.
 
 Head tracking changes the active KDE workspace; it does not automatically move
 an existing window into that workspace. For example, to make Chrome appear on
-the right position, quit the RayNeo viewport, move Chrome to KDE workspace 6
-using its title-bar menu (`More Actions` → `Move to Desktop`), and place it on
-the Samsung output. When the viewport is running, looking right then activates
-workspace 6 and shows that Chrome window.
+the right position, use this simple test:
+
+1. Stop `RayNeoPinnedViewport` with `Ctrl+C` in the terminal where it is
+   running. This only stops our viewport; it does not stop KDE or Chrome.
+2. Focus the Chrome window on the Samsung monitor.
+3. Press `Alt+F3` to open Chrome’s KDE window menu, then choose `More Actions`
+   → `Move to Desktop` → `Right`.
+4. Start the RayNeo viewport again. Looking right now activates `Right` and
+   shows Chrome there.
+
+Do not choose `Configure Virtual Desktops` for this. That panel only edits the
+workspace grid; it is not the window-move menu. If Chrome is placed directly on
+the physical RayNeo output, the fullscreen viewport covers it, so put Chrome
+on the Samsung output for this prototype.
 
 Important: a physical monitor and a KDE virtual desktop are different things.
 In the tested setup, the Samsung is the source display and the RayNeo is the
