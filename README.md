@@ -136,6 +136,13 @@ All eight surrounding workspaces are selectable by head pose. Put Chrome,
 terminals, or other applications on the workspaces you want to use. Plasma
 keeps each workspace live; these are not copied screenshots.
 
+Head tracking changes the active KDE workspace; it does not automatically move
+an existing window into that workspace. For example, to make Chrome appear on
+the right position, quit the RayNeo viewport, move Chrome to KDE workspace 6
+using its title-bar menu (`More Actions` → `Move to Desktop`), and place it on
+the Samsung output. When the viewport is running, looking right then activates
+workspace 6 and shows that Chrome window.
+
 Important: a physical monitor and a KDE virtual desktop are different things.
 In the tested setup, the Samsung is the source display and the RayNeo is the
 physical output to its right. The fullscreen RayNeo viewport covers that
