@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <csignal>
+#include <string>
 #include <utility>
 #include <vector>
 #include <mutex>
@@ -63,6 +64,30 @@ static bool runSpectacle(const char *scope, const char *path)
     {
         execlp("spectacle", "spectacle", "--background", "--nonotify",
                scope, "--output", path, static_cast<char *>(nullptr));
+        _exit(127);
+    }
+
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0)
+    {
+        if (errno != EINTR)
+            return false;
+        if (stopRequested)
+            kill(child, SIGTERM);
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static bool switchKdeDesktop(int desktop)
+{
+    const std::string desktopNumber = std::to_string(desktop);
+    const pid_t child = fork();
+    if (child < 0)
+        return false;
+    if (child == 0)
+    {
+        execlp("qdbus6", "qdbus6", "org.kde.KWin", "/KWin",
+               "setCurrentDesktop", desktopNumber.c_str(), static_cast<char *>(nullptr));
         _exit(127);
     }
 
@@ -322,6 +347,22 @@ static void drawDesktop(GLuint texture, float desktopX, float extraWidth,
     glDisable(GL_TEXTURE_2D);
 }
 
+static void drawCapturedScreen(GLuint texture, float sourceWidth, float textureWidth,
+                               float screenWidth, float screenHeight)
+{
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glColor3f(1, 1, 1);
+    const float u = sourceWidth / textureWidth;
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0); glVertex2f(0, 0);
+    glTexCoord2f(u, 0); glVertex2f(screenWidth, 0);
+    glTexCoord2f(u, 1); glVertex2f(screenWidth, screenHeight);
+    glTexCoord2f(0, 1); glVertex2f(0, screenHeight);
+    glEnd();
+    glDisable(GL_TEXTURE_2D);
+}
+
 static GLuint uploadDesktop(const DesktopImage &image)
 {
     GLuint texture = 0;
@@ -337,10 +378,23 @@ static GLuint uploadDesktop(const DesktopImage &image)
     return texture;
 }
 
-int main()
+int main(int argc, char **argv)
 {
     std::signal(SIGINT, handleStopSignal);
     std::signal(SIGTERM, handleStopSignal);
+
+    bool kdeWorkspaceMode = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp(argv[i], "--kde-workspaces") == 0)
+            kdeWorkspaceMode = true;
+        else if (std::strcmp(argv[i], "--help") == 0)
+        {
+            std::printf("Usage: %s [--kde-workspaces]\n", argv[0]);
+            std::printf("  --kde-workspaces  switch a 3x3 KDE workspace grid using head pose\n");
+            return 0;
+        }
+    }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
@@ -463,9 +517,22 @@ int main()
     glLoadIdentity();
 
     Tracker tracker;
+    const char *centerDesktopText = std::getenv("RAYNEO_KDE_CENTER_DESKTOP");
+    const int centerDesktop = centerDesktopText ? std::atoi(centerDesktopText) : 5;
+    int workspaceSlot = 0;
+    if (kdeWorkspaceMode)
+    {
+        std::printf("KDE workspace mode enabled; expected 3x3 grid with center desktop %d\n",
+                    centerDesktop);
+        std::printf("  center slot=0; left/right=desktop %d/%d; above/below=desktop %d/%d\n",
+                    centerDesktop - 1, centerDesktop + 1,
+                    centerDesktop - 3, centerDesktop + 3);
+    }
     bool running = true;
     uint64_t samples = 0;
     double lastReport = 0;
+    uint32_t lastWorkspaceAttempt = 0;
+    int failedWorkspaceSlot = -1;
     while (running && !stopRequested)
     {
         SDL_Event event{};
@@ -514,23 +581,80 @@ int main()
         }
 
         const float yaw = tracker.orientation().yaw;
-        const float maxYaw = 30.0f * 0.0174532925f;
-        // A left head turn should reveal the left side of the anchored canvas.
-        const float normalizedYaw = std::max(-1.0f, std::min(1.0f, -yaw / maxYaw));
-        const float maxOffset = std::max(0.0f, canvasWidth - width);
-        const float viewX = maxOffset * (0.5f + normalizedYaw * 0.5f);
-        const float maxPitch = 20.0f * 0.0174532925f;
-        const float normalizedPitch = std::max(-1.0f, std::min(1.0f, -tracker.orientation().pitch / maxPitch));
-        const float maxOffsetY = std::max(0.0f, canvasHeight - height);
-        const float viewY = maxOffsetY * (0.5f + normalizedPitch * 0.5f);
+        float viewX = 0;
+        float viewY = 0;
+        if (kdeWorkspaceMode)
+        {
+            // Keep the same axis signs as the tested pinned viewport. The
+            // dominant axis selects one of the four cardinal workspaces.
+            const float horizontal = -yaw * 57.2958f;
+            const float vertical = -tracker.orientation().pitch * 57.2958f;
+            const float enterAngle = 18.0f;
+            const float returnAngle = 10.0f;
+            int desiredSlot = workspaceSlot;
+            if (workspaceSlot == 0)
+            {
+                if (std::fabs(horizontal) >= std::fabs(vertical) &&
+                    std::fabs(horizontal) >= enterAngle)
+                    desiredSlot = horizontal > 0 ? 1 : 2;
+                else if (std::fabs(vertical) >= enterAngle)
+                    desiredSlot = vertical > 0 ? 4 : 3;
+            }
+            else if (std::fabs(horizontal) < returnAngle &&
+                     std::fabs(vertical) < returnAngle)
+            {
+                desiredSlot = 0;
+            }
+
+            const uint32_t nowTicks = SDL_GetTicks();
+            const bool retryAllowed = desiredSlot != failedWorkspaceSlot ||
+                                      nowTicks - lastWorkspaceAttempt >= 1000;
+            if (desiredSlot != workspaceSlot && retryAllowed)
+            {
+                static const int desktopOffsets[] = {0, -1, 1, -3, 3};
+                const int targetDesktop = centerDesktop + desktopOffsets[desiredSlot];
+                lastWorkspaceAttempt = nowTicks;
+                if (targetDesktop >= 1 && targetDesktop <= 9 &&
+                    switchKdeDesktop(targetDesktop))
+                {
+                    workspaceSlot = desiredSlot;
+                    failedWorkspaceSlot = -1;
+                    std::printf("KDE workspace switched to %d (desktop %d)\n",
+                                workspaceSlot, targetDesktop);
+                }
+                else if (!stopRequested)
+                {
+                    failedWorkspaceSlot = desiredSlot;
+                    std::printf("Could not switch to KDE desktop %d; run tools/setup-kde-workspace-grid.sh first\n",
+                                targetDesktop);
+                }
+            }
+        }
+        else
+        {
+            const float maxYaw = 30.0f * 0.0174532925f;
+            // A left head turn should reveal the left side of the anchored canvas.
+            const float normalizedYaw = std::max(-1.0f, std::min(1.0f, -yaw / maxYaw));
+            const float maxOffset = std::max(0.0f, canvasWidth - width);
+            viewX = maxOffset * (0.5f + normalizedYaw * 0.5f);
+            const float maxPitch = 20.0f * 0.0174532925f;
+            const float normalizedPitch = std::max(-1.0f, std::min(1.0f, -tracker.orientation().pitch / maxPitch));
+            const float maxOffsetY = std::max(0.0f, canvasHeight - height);
+            viewY = maxOffsetY * (0.5f + normalizedPitch * 0.5f);
+        }
 
         glClearColor(0.02f, 0.02f, 0.02f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
         glTranslatef(-viewX, -viewY, 0);
-        drawDesktop(desktopTexture, desktopX, extraMonitorWidth,
-                    desktopY, desktop.width, desktop.height);
+        if (kdeWorkspaceMode)
+            drawCapturedScreen(desktopTexture, static_cast<float>(width),
+                               static_cast<float>(desktop.width),
+                               static_cast<float>(width), static_cast<float>(height));
+        else
+            drawDesktop(desktopTexture, desktopX, extraMonitorWidth,
+                        desktopY, desktop.width, desktop.height);
         SDL_GL_SwapWindow(window);
 
         const double now = SDL_GetTicks() * 0.001;

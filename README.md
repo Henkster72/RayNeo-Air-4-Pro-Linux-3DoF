@@ -97,7 +97,72 @@ The captured image deliberately excludes the mouse pointer. Wayland already draw
 
 Do not use `SDL_VIDEODRIVER=x11` in a Wayland session. Xwayland may put the viewport on the Samsung monitor instead of the RayNeo.
 
-### 6. Optional: test the IMU first
+### 6. Use real KDE virtual desktops
+
+The normal viewport above is a visual panning test. It does not create a real
+second monitor. For live KDE workspaces, first create a 3x3 Plasma workspace
+grid:
+
+```bash
+tools/setup-kde-workspace-grid.sh
+```
+
+On a normal fresh KDE session with one workspace, this inserts four workspaces
+before your existing workspace and four after it. Your existing main workspace
+therefore becomes workspace 5, in the geometric center. It then changes the
+grid to three rows.
+
+If you already ran an older version of this helper, it appended workspaces and
+left your main workspace in the top-left. Move anything important out of the
+old RayNeo workspaces, then repair that exact layout with:
+
+```bash
+tools/setup-kde-workspace-grid.sh --repair-old-grid
+```
+
+The repair option removes only workspaces whose names start with `RayNeo Grid`
+and rebuilds the corrected layout. For any other existing KDE workspace
+layout, the helper refuses to change it; configure that layout manually.
+
+The five positions used by the head tracker are:
+
+```text
+             2  (above)
+4 (left)   5  (center)   6 (right)
+             8  (below)
+```
+
+The four corner workspaces are left available for normal KDE use. Put Chrome,
+terminals, or other applications on the workspaces you want to use. Plasma
+keeps each workspace live; these are not copied screenshots.
+
+Before starting the program, add a KDE Window Rule for the window title
+`RayNeo pinned viewport` and set its Virtual Desktops property to `All
+Desktops`. This keeps the RayNeo viewport visible while KWin changes the
+workspace on the Samsung display. In Plasma, open System Settings → Window
+Management → Window Rules → Add New, match the title, then set Virtual
+Desktops to `All Desktops`.
+
+Start the workspace mode with:
+
+```bash
+SDL_VIDEODRIVER=wayland \
+  build/examples/pinned_viewport/RayNeoPinnedViewport --kde-workspaces
+```
+
+Keep your head centered during the first-second gyro calibration. Looking
+left, right, up, or down switches to the corresponding KDE workspace. Return
+near the center pose to return to workspace 5. The program uses a small
+hysteresis band so it does not flap between workspaces while your head is
+nearly centered.
+
+This mode currently uses the existing Spectacle capture path to refresh the
+RayNeo image. The workspaces themselves are real and live, but the image path
+is still a prototype and is slower than a native PipeWire stream. Mouse and
+keyboard routing from the RayNeo window into the active Samsung workspace is
+also not implemented yet.
+
+### 7. Optional: test the IMU first
 
 If you want to confirm the glasses before starting the viewport:
 
@@ -163,6 +228,7 @@ That is intentional when looking far up or down: the captured physical screen is
 - A synthetic pinned viewport driven by head yaw and pitch
 - Live Samsung-region refresh through KDE Spectacle
 - An additional visual monitor region to the left of the captured Samsung display
+- Experimental switching between real KDE workspaces using head pose
 
 ## Tested setup
 
@@ -203,6 +269,8 @@ Controls:
 - The extra visual monitor currently duplicates the captured Samsung region rather than providing an independent workspace.
 - The viewport does not yet route keyboard or mouse input to a synthetic monitor region.
 - The extra visual region is not a real Wayland/KDE output and cannot host application windows.
+- KDE workspace mode changes the live workspace, but still refreshes the RayNeo texture through Spectacle screenshots.
+- KDE workspace mode does not yet forward RayNeo mouse clicks or keyboard input to the active workspace.
 - Orientation is gyro-based and can drift during long sessions.
 - Pitch and yaw sensitivity are currently tuned for the tested Samsung M7 / RayNeo setup.
 - No positional 6DoF tracking is implemented.
@@ -223,6 +291,8 @@ include/rayneo/rayneo_api.h               Public C API
 Useful next steps include:
 
 - continuous Wayland/PipeWire desktop capture without hiding the viewport
+- native PipeWire/KDE capture for smooth live workspace video
+- pointer and keyboard routing through the Wayland RemoteDesktop/EIS path
 - independent live virtual workspaces
 - configurable yaw/pitch sensitivity and dead zones
 - improved drift correction and magnetometer fusion
