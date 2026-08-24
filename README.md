@@ -91,6 +91,8 @@ Now test the movement:
 - Press `C` to capture the desktop immediately after changing windows.
 - Press `Esc` to quit.
 
+The mouse pointer is included in the live desktop capture. It remains attached to its real desktop position while you look around; it does not move because of head rotation.
+
 Do not use `SDL_VIDEODRIVER=x11` in a Wayland session. Xwayland may put the viewport on the Samsung monitor instead of the RayNeo.
 
 ### 6. Optional: test the IMU first
@@ -158,7 +160,7 @@ That is intentional when looking far up or down: the captured physical screen is
 - Native Wayland output selection for the RayNeo display
 - A synthetic pinned viewport driven by head yaw and pitch
 - Live Samsung-region refresh through KDE Spectacle
-- An additional virtual monitor region to the left of the captured Samsung display
+- An additional visual monitor region to the left of the captured Samsung display
 
 ## Tested setup
 
@@ -185,6 +187,8 @@ At startup the application captures the complete desktop as a 5120×1440 image. 
 
 The captured screen is centered at the neutral head pose. Yaw moves horizontally through this canvas. Pitch moves vertically through a taller virtual space; a strong look up or down moves the finite captured screen out of view.
 
+The extra monitor is currently a visual duplicate inside the OpenGL canvas. It is not a real KDE output, so applications cannot be launched or interacted with on that region yet.
+
 Controls:
 
 - `R` — recenter; hold the glasses still for one second
@@ -194,7 +198,8 @@ Controls:
 ## Current limitations
 
 - Live capture currently refreshes through repeated Spectacle screenshots, not a continuous PipeWire/KDE screencopy stream. This gives live updates but lower frame rate and higher CPU use than a native stream.
-- The extra left monitor currently duplicates the captured Samsung region rather than providing an independent workspace.
+- The extra visual monitor currently duplicates the captured Samsung region rather than providing an independent workspace.
+- The viewport does not yet route keyboard or mouse input to a synthetic monitor region.
 - Orientation is gyro-based and can drift during long sessions.
 - Pitch and yaw sensitivity are currently tuned for the tested Samsung M7 / RayNeo setup.
 - No positional 6DoF tracking is implemented.

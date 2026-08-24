@@ -52,7 +52,7 @@ static bool captureDesktop(DesktopImage &image, const char *scope)
                   static_cast<long>(getpid()), sequence.fetch_add(1));
     char command[320];
     std::snprintf(command, sizeof(command),
-                  "spectacle --background --nonotify %s --output %s", scope, path);
+                  "spectacle --background --nonotify --pointer %s --output %s", scope, path);
     if (std::system(command) != 0)
     {
         std::printf("Desktop capture failed; is spectacle installed?\n");
