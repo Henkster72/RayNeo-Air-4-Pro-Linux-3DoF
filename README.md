@@ -136,6 +136,14 @@ The four corner workspaces are left available for normal KDE use. Put Chrome,
 terminals, or other applications on the workspaces you want to use. Plasma
 keeps each workspace live; these are not copied screenshots.
 
+Important: a physical monitor and a KDE virtual desktop are different things.
+In the tested setup, the Samsung is the source display and the RayNeo is the
+physical output to its right. The fullscreen RayNeo viewport covers that
+physical RayNeo output while it runs, so applications placed directly on the
+RayNeo output are underneath the viewport. Put the Chrome/YouTube window on
+the Samsung side of the KDE workspace you want to visit; head movement then
+switches the KDE workspace and the RayNeo viewport shows that workspace.
+
 Before starting the program, add a KDE Window Rule for the window title
 `RayNeo pinned viewport` and set its Virtual Desktops property to `All
 Desktops`. This keeps the RayNeo viewport visible while KWin changes the
