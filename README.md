@@ -56,7 +56,7 @@ sudo apt install -y \
   libgl1-mesa-dev
 ```
 
-Desktop capture is optional and is only used by the experimental pinned-source
+Desktop capture is optional and is only used by the experimental `--live`
 mode.
 
 ### 3. Download the project
@@ -107,6 +107,10 @@ rayneo
 It checks that the glasses are connected, checks/builds the viewer, pins the
 RayNeo window to the glasses output and starts the head-tracking-only demo.
 It does not capture the desktop or change KDE virtual desktops.
+
+Use `rayneo` for the immediate colored-panel test. Use `rayneo --live` only
+when you explicitly want the slower experimental capture of the Samsung/source
+monitor.
 
 The normal layout is deliberately simple:
 

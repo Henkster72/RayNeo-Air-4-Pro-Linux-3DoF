@@ -10,22 +10,30 @@ done
 repo_dir=$(cd -P -- "$(dirname -- "$script_path")" && pwd)
 viewer="$repo_dir/build/examples/pinned_viewport/RayNeoPinnedViewport"
 
+mode=--headtracking
+if [[ "${1:-}" == "--live" ]]; then
+    mode=--pinned-source
+    shift
+fi
+
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'EOF'
 Start the RayNeo Air 4 Pro head-tracking demo.
 
 Usage:
   ./run-rayneo
+  ./run-rayneo --live
 
 After a reboot this command checks the Wayland/KDE session, checks/builds the
 viewer, pins it to the RayNeo output without changing KDE desktops, and starts
-an immediate synthetic head-tracking scene.
+an immediate synthetic head-tracking scene. Use --live for the experimental
+source-monitor capture mode.
 EOF
     exit 0
 fi
 
 if [[ $# -ne 0 ]]; then
-    echo "Usage: ./run-rayneo" >&2
+    echo "Usage: ./run-rayneo [--live]" >&2
     exit 2
 fi
 
@@ -35,7 +43,11 @@ if [[ "${XDG_SESSION_TYPE:-}" != "wayland" ]]; then
     exit 1
 fi
 
-for command_name in cmake qdbus6; do
+required_commands=(cmake qdbus6)
+if [[ "$mode" == "--pinned-source" ]]; then
+    required_commands+=(spectacle)
+fi
+for command_name in "${required_commands[@]}"; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Required command not found: $command_name" >&2
         exit 1
@@ -88,6 +100,10 @@ fi
 
 echo "Enabling RayNeo output pinning without changing KDE desktops..."
 "$repo_dir/tools/enable-rayneo-kwin-sticky.sh"
-echo "Starting head-tracking-only mode. Keep the glasses still during calibration."
+if [[ "$mode" == "--pinned-source" ]]; then
+    echo "Starting experimental live source-monitor mode. Keep the glasses still during calibration."
+else
+    echo "Starting head-tracking-only mode. Keep the glasses still during calibration."
+fi
 
-exec env SDL_VIDEODRIVER=wayland "$viewer" --headtracking
+exec env SDL_VIDEODRIVER=wayland "$viewer" "$mode"
