@@ -110,7 +110,9 @@ It does not capture the desktop or change KDE virtual desktops.
 
 Use `rayneo` for the immediate colored-panel test. Use `rayneo --live` only
 when you explicitly want the slower experimental capture of the Samsung/source
-monitor.
+monitor. Live mode refreshes the source monitor and preserves the initial
+RayNeo-side image as a snapshot, because the RayNeo output is covered by the
+viewport while the program is running.
 
 The normal layout is deliberately simple:
 

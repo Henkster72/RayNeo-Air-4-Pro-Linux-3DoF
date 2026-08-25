@@ -568,6 +568,9 @@ int main(int argc, char **argv)
         std::printf("Source display: %d: %s\n", sourceDisplay, sourceName ? sourceName : "(unnamed)");
 
     DesktopImage desktop;
+    bool liveUpdatesSourceRegion = false;
+    int liveUpdateX = 0;
+    int liveUpdateY = 0;
     if (headTrackingDemoMode)
     {
         std::printf("Head-tracking demo mode enabled; desktop capture is disabled\n");
@@ -582,7 +585,19 @@ int main(int argc, char **argv)
         }
         std::printf("Captured combined desktop framebuffer: %dx%d\n",
                     captured.width, captured.height);
-        if (cropSourceDisplay)
+        if (pinnedSourceMode)
+        {
+            // Keep the initial RayNeo-side image as a stable snapshot. The
+            // viewport will cover that output once it starts, so refreshing
+            // the full desktop would capture the viewport recursively.
+            desktop = std::move(captured);
+            liveUpdatesSourceRegion = true;
+            liveUpdateX = displayBounds[static_cast<size_t>(sourceDisplay)].x - virtualLeft;
+            liveUpdateY = displayBounds[static_cast<size_t>(sourceDisplay)].y - virtualTop;
+            std::printf("Using combined desktop snapshot: %dx%d\n",
+                        desktop.width, desktop.height);
+        }
+        else if (cropSourceDisplay)
         {
             if (!cropDisplay(captured, displayBounds[static_cast<size_t>(sourceDisplay)],
                              virtualLeft, virtualTop, desktop))
@@ -679,29 +694,45 @@ int main(int argc, char **argv)
     }
 
     auto applyLiveFrame = [&](const DesktopImage &frame) {
-        if ((cropSourceDisplay && (frame.width != desktop.width || frame.height != desktop.height)) ||
+        if ((liveUpdatesSourceRegion &&
+             (frame.width != displayBounds[static_cast<size_t>(sourceDisplay)].w ||
+              frame.height != displayBounds[static_cast<size_t>(sourceDisplay)].h)) ||
+            (!liveUpdatesSourceRegion && cropSourceDisplay &&
+             (frame.width != desktop.width || frame.height != desktop.height)) ||
             (!cropSourceDisplay && (frame.width < width || frame.height != height ||
                                     desktop.width < width || desktop.height < height)))
             return;
-        const int copyWidth = cropSourceDisplay ? desktop.width : width;
-        const int copyHeight = cropSourceDisplay ? desktop.height : height;
+        const int copyWidth = liveUpdatesSourceRegion ? frame.width :
+                              (cropSourceDisplay ? desktop.width : width);
+        const int copyHeight = liveUpdatesSourceRegion ? frame.height :
+                               (cropSourceDisplay ? desktop.height : height);
+        const int destinationX = liveUpdatesSourceRegion ? liveUpdateX : 0;
+        const int destinationY = liveUpdatesSourceRegion ? liveUpdateY : 0;
+        if (destinationX < 0 || destinationY < 0 ||
+            destinationX + copyWidth > desktop.width ||
+            destinationY + copyHeight > desktop.height)
+            return;
         for (int y = 0; y < copyHeight; ++y)
         {
-            std::memcpy(desktop.pixels.data() + static_cast<size_t>(y) * desktop.width * 4,
+            std::memcpy(desktop.pixels.data() +
+                            (static_cast<size_t>(destinationY + y) * desktop.width + destinationX) * 4,
                         frame.pixels.data() + static_cast<size_t>(y) * frame.width * 4,
                         static_cast<size_t>(copyWidth) * 4);
         }
         glBindTexture(GL_TEXTURE_2D, desktopTexture);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, desktop.width);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, copyWidth, copyHeight,
-                        GL_RGBA, GL_UNSIGNED_BYTE, desktop.pixels.data());
+        glTexSubImage2D(GL_TEXTURE_2D, 0, destinationX, destinationY, copyWidth, copyHeight,
+                        GL_RGBA, GL_UNSIGNED_BYTE,
+                        desktop.pixels.data() +
+                            (static_cast<size_t>(destinationY) * desktop.width + destinationX) * 4);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     };
 
     const float extraMonitorWidth = static_cast<float>(width);
     const float desktopX = extraMonitorWidth;
     const float canvasWidth = headTrackingDemoMode ? static_cast<float>(width) * 3.0f :
-                               desktopX + static_cast<float>(desktop.width);
+                               (pinnedSourceMode ? static_cast<float>(desktop.width) :
+                                desktopX + static_cast<float>(desktop.width));
     const float canvasHeight = static_cast<float>(height) * 3.0f;
     const float desktopY = headTrackingDemoMode ? static_cast<float>(height) :
                             (canvasHeight - desktop.height) * 0.5f;
@@ -927,6 +958,20 @@ int main(int argc, char **argv)
             drawCapturedScreen(desktopTexture, static_cast<float>(width),
                                static_cast<float>(desktop.width),
                                static_cast<float>(width), static_cast<float>(height));
+        else if (pinnedSourceMode)
+        {
+            glEnable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, desktopTexture);
+            glColor3f(1, 1, 1);
+            glBegin(GL_QUADS);
+            glTexCoord2f(0, 0); glVertex2f(0, desktopY);
+            glTexCoord2f(1, 0); glVertex2f(static_cast<float>(desktop.width), desktopY);
+            glTexCoord2f(1, 1); glVertex2f(static_cast<float>(desktop.width),
+                                           desktopY + static_cast<float>(desktop.height));
+            glTexCoord2f(0, 1); glVertex2f(0, desktopY + static_cast<float>(desktop.height));
+            glEnd();
+            glDisable(GL_TEXTURE_2D);
+        }
         else
             drawDesktop(desktopTexture, desktopX, extraMonitorWidth,
                         desktopY, desktop.width, desktop.height);
