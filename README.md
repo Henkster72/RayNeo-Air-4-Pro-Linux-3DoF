@@ -66,7 +66,36 @@ cmake -B build \
 cmake --build build -j"$(nproc)"
 ```
 
-### 5. Start the pinned desktop
+### 5. Start it after a reboot
+
+Use this one command from the project directory:
+
+```bash
+./run-rayneo
+```
+
+It checks that the glasses are connected, checks/builds the viewer,
+restores the simple KDE layout, reloads the small KWin integration, and starts
+the RayNeo viewer. This is the normal command to use every time after logging
+in or rebooting.
+
+The normal layout is deliberately simple:
+
+```text
+Center = your normal Samsung desktop
+Right  = a live Chrome/YouTube desktop
+RayNeo = the head-tracked viewer
+```
+
+For the first setup, switch KDE to the `Right` desktop, open Chrome/YouTube on
+the Samsung monitor, then switch back to `Center`. The launcher returns to
+`Center` before starting, and looking right selects the live `Right` desktop.
+Keep the glasses still for the first second while it says `Gyro calibrated`.
+
+Press `R` to recenter, `C` to refresh the capture immediately, or `Esc` to
+quit. `Ctrl+C` in the terminal also exits.
+
+### 6. Optional: start the synthetic viewport
 
 Use the native Wayland backend:
 
@@ -97,7 +126,7 @@ The captured image deliberately excludes the mouse pointer. Wayland already draw
 
 Do not use `SDL_VIDEODRIVER=x11` in a Wayland session. Xwayland may put the viewport on the Samsung monitor instead of the RayNeo.
 
-### 6. Recommended: one center workspace and one right workspace
+### 7. Manual workspace setup and troubleshooting
 
 For the simplest useful setup, use only two KDE workspaces:
 
@@ -107,7 +136,8 @@ Right  = Chrome/YouTube content
 RayNeo = head-tracked viewer
 ```
 
-Create that setup:
+The one-command launcher above runs both commands automatically. To run them
+separately while troubleshooting, create the setup with:
 
 ```bash
 tools/setup-kde-two-workspaces.sh
@@ -124,7 +154,7 @@ Keep your head centered during calibration. Looking right activates the live
 `Right` workspace; returning near center activates `Center`. This is a
 workspace switch, not a fake second physical monitor.
 
-### 7. Optional advanced 3x3 workspace grid
+### 8. Optional advanced 3x3 workspace grid
 
 The normal viewport above is a visual panning test. It does not create a real
 second monitor. For live KDE workspaces, first create a 3x3 Plasma workspace
@@ -220,7 +250,7 @@ is still a prototype and is slower than a native PipeWire stream. Mouse and
 keyboard routing from the RayNeo window into the active Samsung workspace is
 also not implemented yet.
 
-### 8. Optional: test the IMU first
+### 9. Optional: test the IMU first
 
 If you want to confirm the glasses before starting the viewport:
 

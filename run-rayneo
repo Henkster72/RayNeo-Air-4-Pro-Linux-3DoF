@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+viewer="$repo_dir/build/examples/pinned_viewport/RayNeoPinnedViewport"
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    cat <<'EOF'
+Start the RayNeo Air 4 Pro two-workspace desktop viewer.
+
+Usage:
+  ./run-rayneo
+
+After a reboot this command checks the Wayland/KDE session, checks/builds the
+viewer, restores the Center/Right workspace setup, and starts tracking.
+EOF
+    exit 0
+fi
+
+if [[ $# -ne 0 ]]; then
+    echo "Usage: ./run-rayneo" >&2
+    exit 2
+fi
+
+if [[ "${XDG_SESSION_TYPE:-}" != "wayland" ]]; then
+    echo "This viewer needs a KDE Wayland session (XDG_SESSION_TYPE=wayland)." >&2
+    echo "Current session: ${XDG_SESSION_TYPE:-not set}" >&2
+    exit 1
+fi
+
+for command_name in cmake qdbus6 gdbus spectacle; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "Required command not found: $command_name" >&2
+        exit 1
+    fi
+done
+
+if command -v lsusb >/dev/null 2>&1; then
+    if usb_device=$(lsusb -d 1bbb:af50 2>/dev/null); then
+        echo "USB: $usb_device"
+    else
+        echo "Warning: lsusb could not verify 1bbb:af50; the SDK will test the device."
+    fi
+else
+    echo "Warning: lsusb is not installed; USB detection will be checked by the SDK."
+fi
+
+echo "Building/checking the RayNeo viewer..."
+if [[ ! -x "$viewer" ]]; then
+    cmake -B "$repo_dir/build" \
+        -DRAYNEO_BUILD_EXAMPLES=ON \
+        -DRAYNEO_BUILD_OPENVR_DRIVER=OFF
+    cmake --build "$repo_dir/build" -j"$(nproc)"
+else
+    echo "Viewer already built; skipping rebuild."
+fi
+
+if [[ ! -x "$viewer" ]]; then
+    echo "Viewer was not produced: $viewer" >&2
+    exit 1
+fi
+
+echo "Preparing KDE Center/Right workspaces..."
+"$repo_dir/tools/setup-kde-two-workspaces.sh"
+echo "Starting RayNeo. Keep the glasses still during calibration."
+
+exec env SDL_VIDEODRIVER=wayland "$viewer" --kde-two-workspaces
