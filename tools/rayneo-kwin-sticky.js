@@ -1,8 +1,13 @@
 function rayneoOutput(window) {
     var preferred = readConfig("outputName", "");
-    var prefix = "RayNeo pinned viewport - ";
-    var requested = window.caption.indexOf(prefix) === 0 ?
-        window.caption.substring(prefix.length) : "";
+    var prefixes = ["RayNeo pinned viewport - ", "RayNeo head-tracking demo - "];
+    var requested = "";
+    for (var p = 0; p < prefixes.length; ++p) {
+        if (window.caption.indexOf(prefixes[p]) === 0) {
+            requested = window.caption.substring(prefixes[p].length);
+            break;
+        }
+    }
     var fallback = null;
     for (var i = 0; i < workspace.screens.length; ++i) {
         var output = workspace.screens[i];
@@ -20,7 +25,8 @@ function rayneoOutput(window) {
 }
 
 function keepRayNeoViewportVisible(window) {
-    if (window && window.caption.indexOf("RayNeo pinned viewport") === 0) {
+    if (window && (window.caption.indexOf("RayNeo pinned viewport") === 0 ||
+                   window.caption.indexOf("RayNeo head-tracking demo") === 0)) {
         window.onAllDesktops = true;
         var output = rayneoOutput(window);
         if (output) {
@@ -33,7 +39,8 @@ function keepRayNeoViewportVisible(window) {
 }
 
 function watchRayNeoViewport(window) {
-    if (!window || window.caption.indexOf("RayNeo pinned viewport") !== 0)
+    if (!window || (window.caption.indexOf("RayNeo pinned viewport") !== 0 &&
+                    window.caption.indexOf("RayNeo head-tracking demo") !== 0))
         return;
 
     keepRayNeoViewportVisible(window);

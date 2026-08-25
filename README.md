@@ -6,7 +6,7 @@ This is a working prototype, not a complete OpenXR, Monado, SteamVR, or Linux co
 
 ## Quick start
 
-These steps are the shortest route to seeing the desktop move inside the glasses. They assume Debian 13, KDE Plasma, and a Wayland session.
+These steps are the shortest route to verifying immediate 3DoF head tracking inside the glasses. They assume Debian 13, KDE Plasma, and a Wayland session.
 
 ### 1. Connect the glasses
 
@@ -53,11 +53,11 @@ sudo apt install -y \
   build-essential cmake pkg-config \
   libusb-1.0-0-dev \
   libsdl2-dev libsdl2-ttf-dev \
-  libgl1-mesa-dev \
-  spectacle
+  libgl1-mesa-dev
 ```
 
-`spectacle` is used to capture the current desktop before the RayNeo viewport opens.
+Desktop capture is optional and is only used by the experimental pinned-source
+mode.
 
 ### 3. Download the project
 
@@ -104,10 +104,9 @@ terminal, install the project-local launcher once:
 rayneo
 ```
 
-It checks that the glasses are connected, checks/builds the viewer,
-pins the RayNeo window to the glasses output and starts the viewer without
-changing your KDE virtual desktops. This is the normal command to use every
-time after logging in or rebooting.
+It checks that the glasses are connected, checks/builds the viewer, pins the
+RayNeo window to the glasses output and starts the head-tracking-only demo.
+It does not capture the desktop or change KDE virtual desktops.
 
 The normal layout is deliberately simple:
 
@@ -116,33 +115,26 @@ Samsung/source monitor = your normal desktop
 RayNeo = the head-tracked viewport
 ```
 
-Seeing `Captured combined desktop framebuffer: 5120x1440` in the terminal is
-normal when two 2560x1440 outputs are connected. KDE exposes them as one
-5120x1440 virtual framebuffer. In the two-workspace mode the viewer immediately
-crops that capture back to the selected source monitor, so the RayNeo texture is
-2560x1440 rather than a split 5120-pixel image.
-
-The stable launcher does not switch KDE desktops. It keeps the physical
-Samsung desktop stable and tracks a cropped copy of that source monitor inside
-the RayNeo viewport. The old Center/Right workspace experiment remains
-available below, but it changes both physical outputs and is slower.
+The head-tracking demo renders colored reference panels directly. There is no
+5120x1440 desktop capture, no duplicated Samsung image, and no Center/Right
+workspace switching.
 Keep the glasses still for the first second while it says `Gyro calibrated`.
 
 Press `R` to recenter, `C` to refresh the capture immediately, or `Esc` to
 quit. `Ctrl+C` in the terminal also exits.
 
-### 6. Optional: start the synthetic viewport
+### 6. Optional: start the head-tracking demo manually
 
 Use the native Wayland backend:
 
 ```bash
-SDL_VIDEODRIVER=wayland build/examples/pinned_viewport/RayNeoPinnedViewport
+SDL_VIDEODRIVER=wayland \
+  build/examples/pinned_viewport/RayNeoPinnedViewport --headtracking
 ```
 
-The viewport now refreshes the source-monitor region in the background while it
-is running. The capture uses KDE Spectacle, so the refresh rate depends on the
-desktop and is lower than a native video stream. The RayNeo viewport stays
-visible while this happens.
+This mode renders synthetic colored panels at the display rate. It is the
+recommended first test because it isolates USB IMU, orientation, recentering,
+and RayNeo output placement from desktop capture.
 
 Keep the glasses still for the first second. The program will print:
 
@@ -153,10 +145,9 @@ Gyro calibrated; viewport tracking enabled
 
 Now test the movement:
 
-- Turn your head left and right: the desktop moves horizontally.
-- Look up and down: the finite virtual screen moves vertically and can leave view.
+- Turn your head left and right: the colored panels move horizontally.
+- Look up and down: the panel grid moves vertically.
 - Press `R` and hold still for one second to recenter.
-- Press `C` to capture the desktop immediately after changing windows.
 - Press `Esc` to quit.
 
 `Ctrl+C` in the terminal also exits cleanly.
@@ -168,7 +159,7 @@ viewport on the source monitor instead of the RayNeo output.
 
 ### 7. Manual workspace setup and troubleshooting
 
-For the simplest useful setup, use only two KDE workspaces:
+The old experimental workspace mode uses two KDE workspaces:
 
 ```text
 Center = source-monitor desktop content
@@ -176,8 +167,8 @@ Right  = Chrome/YouTube content
 RayNeo = head-tracked viewer
 ```
 
-The one-command launcher above runs both commands automatically. To run them
-separately while troubleshooting, create the setup with:
+The normal `rayneo` command does not use this mode. To run it separately while
+troubleshooting, create the setup with:
 
 ```bash
 tools/setup-kde-two-workspaces.sh
@@ -389,10 +380,10 @@ The RayNeo is connected as a normal DisplayPort monitor. The viewport selects th
 
 ## Viewport behavior
 
-At startup the application captures the complete desktop. In KDE workspace
-mode it extracts the first non-RayNeo output as the source monitor and refreshes
-that region in the background. The ordinary viewport renders a larger virtual
-canvas:
+The default head-tracking demo renders a 3x3 colored reference grid. The
+experimental pinned-source mode captures the complete desktop, extracts the
+first non-RayNeo output as the source monitor, and refreshes that region in the
+background. Its canvas is:
 
 ```text
 [ duplicated source region ][ captured source ][ captured right-hand region ]
@@ -405,12 +396,12 @@ The extra monitor is currently a visual duplicate inside the OpenGL canvas. It i
 Controls:
 
 - `R` — recenter; hold the glasses still for one second
-- `C` — refresh the desktop capture
+- `C` — refresh the desktop capture in pinned-source mode
 - `Esc` — exit
 
 ## Current limitations
 
-- Live capture currently refreshes through repeated Spectacle screenshots, not a continuous PipeWire/KDE screencopy stream. This gives live updates but lower frame rate and higher CPU use than a native stream.
+- Experimental live capture refreshes through repeated Spectacle screenshots, not a continuous PipeWire/KDE screencopy stream. It is intentionally not part of the default head-tracking command.
 - The extra visual monitor currently duplicates the captured source region rather than providing an independent workspace.
 - The viewport does not yet route keyboard or mouse input to a synthetic monitor region.
 - The extra visual region is not a real Wayland/KDE output and cannot host application windows.

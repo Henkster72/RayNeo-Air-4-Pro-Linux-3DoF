@@ -401,6 +401,40 @@ static void drawCapturedScreen(GLuint texture, float sourceWidth, float textureW
     glDisable(GL_TEXTURE_2D);
 }
 
+static void drawHeadTrackingPanels(float width, float height)
+{
+    const float colors[3][3][3] = {
+        {{0.18f, 0.28f, 0.55f}, {0.30f, 0.18f, 0.45f}, {0.18f, 0.45f, 0.35f}},
+        {{0.55f, 0.28f, 0.12f}, {0.08f, 0.12f, 0.20f}, {0.15f, 0.48f, 0.25f}},
+        {{0.42f, 0.18f, 0.38f}, {0.25f, 0.42f, 0.18f}, {0.50f, 0.30f, 0.12f}}};
+
+    glBegin(GL_QUADS);
+    for (int row = 0; row < 3; ++row)
+    {
+        for (int column = 0; column < 3; ++column)
+        {
+            const float x = column * width;
+            const float y = row * height;
+            glColor3f(colors[row][column][0], colors[row][column][1], colors[row][column][2]);
+            glVertex2f(x, y);
+            glVertex2f(x + width, y);
+            glVertex2f(x + width, y + height);
+            glVertex2f(x, y + height);
+        }
+    }
+    glEnd();
+
+    glLineWidth(6.0f);
+    glColor3f(0.95f, 0.95f, 0.95f);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(width, height);
+    glVertex2f(width * 2.0f, height);
+    glVertex2f(width * 2.0f, height * 2.0f);
+    glVertex2f(width, height * 2.0f);
+    glEnd();
+    glLineWidth(1.0f);
+}
+
 static GLuint uploadDesktop(const DesktopImage &image)
 {
     GLuint texture = 0;
@@ -424,6 +458,7 @@ int main(int argc, char **argv)
     bool kdeWorkspaceMode = false;
     bool kdeTwoWorkspaceMode = false;
     bool pinnedSourceMode = false;
+    bool headTrackingDemoMode = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--kde-workspaces") == 0)
@@ -432,9 +467,12 @@ int main(int argc, char **argv)
             kdeTwoWorkspaceMode = true;
         else if (std::strcmp(argv[i], "--pinned-source") == 0)
             pinnedSourceMode = true;
+        else if (std::strcmp(argv[i], "--headtracking") == 0)
+            headTrackingDemoMode = true;
         else if (std::strcmp(argv[i], "--help") == 0)
         {
-            std::printf("Usage: %s [--pinned-source|--kde-two-workspaces|--kde-workspaces]\n", argv[0]);
+            std::printf("Usage: %s [--headtracking|--pinned-source|--kde-two-workspaces|--kde-workspaces]\n", argv[0]);
+            std::printf("  --headtracking        render immediate synthetic panels; do not capture the desktop\n");
             std::printf("  --pinned-source       track a cropped source monitor without switching KDE desktops\n");
             std::printf("  --kde-two-workspaces  switch Center/Right KDE workspaces\n");
             std::printf("  --kde-workspaces       switch the advanced 3x3 KDE grid\n");
@@ -515,44 +553,54 @@ int main(int argc, char **argv)
             break;
         }
     }
-    if ((kdeWorkspaceMode || kdeTwoWorkspaceMode) && sourceDisplay < 0)
+    if (!headTrackingDemoMode &&
+        (kdeWorkspaceMode || kdeTwoWorkspaceMode || pinnedSourceMode) && sourceDisplay < 0)
     {
         std::printf("A separate source monitor is required for KDE workspace mode\n");
         SDL_Quit();
         return 1;
     }
-    const bool cropSourceDisplay = pinnedSourceMode || kdeWorkspaceMode || kdeTwoWorkspaceMode;
+    const bool cropSourceDisplay = !headTrackingDemoMode &&
+                                   (pinnedSourceMode || kdeWorkspaceMode || kdeTwoWorkspaceMode);
     const char *sourceName = sourceDisplay >= 0 ?
         SDL_GetDisplayName(sourceDisplay) : "full desktop";
     if (cropSourceDisplay)
         std::printf("Source display: %d: %s\n", sourceDisplay, sourceName ? sourceName : "(unnamed)");
 
     DesktopImage desktop;
-    DesktopImage captured;
-    if (!captureDesktop(captured, "--fullscreen"))
+    if (headTrackingDemoMode)
     {
-        SDL_Quit();
-        return 1;
+        std::printf("Head-tracking demo mode enabled; desktop capture is disabled\n");
     }
-    std::printf("Captured combined desktop framebuffer: %dx%d\n",
-                captured.width, captured.height);
-    if (cropSourceDisplay)
+    else
     {
-        if (!cropDisplay(captured, displayBounds[static_cast<size_t>(sourceDisplay)],
-                         virtualLeft, virtualTop, desktop))
+        DesktopImage captured;
+        if (!captureDesktop(captured, "--fullscreen"))
         {
-            std::printf("Could not extract the source monitor from the desktop capture\n");
             SDL_Quit();
             return 1;
         }
-        std::printf("Using source monitor image: %dx%d\n", desktop.width, desktop.height);
+        std::printf("Captured combined desktop framebuffer: %dx%d\n",
+                    captured.width, captured.height);
+        if (cropSourceDisplay)
+        {
+            if (!cropDisplay(captured, displayBounds[static_cast<size_t>(sourceDisplay)],
+                             virtualLeft, virtualTop, desktop))
+            {
+                std::printf("Could not extract the source monitor from the desktop capture\n");
+                SDL_Quit();
+                return 1;
+            }
+            std::printf("Using source monitor image: %dx%d\n", desktop.width, desktop.height);
+        }
+        else
+            desktop = std::move(captured);
     }
-    else
-        desktop = std::move(captured);
 
     SDL_Rect bounds = displayBounds[static_cast<size_t>(targetDisplay)];
     SDL_GetDisplayBounds(targetDisplay, &bounds);
-    std::string windowTitle = "RayNeo pinned viewport";
+    std::string windowTitle = headTrackingDemoMode ?
+        "RayNeo head-tracking demo" : "RayNeo pinned viewport";
     if (const char *targetName = SDL_GetDisplayName(targetDisplay))
         windowTitle += " - " + std::string(targetName);
     SDL_Window *window = SDL_CreateWindow(
@@ -595,38 +643,40 @@ int main(int argc, char **argv)
 
     int width = 0, height = 0;
     SDL_GetWindowSize(window, &width, &height);
-    GLuint desktopTexture = uploadDesktop(desktop);
+    GLuint desktopTexture = headTrackingDemoMode ? 0 : uploadDesktop(desktop);
 
     LiveCapture liveCapture;
-    std::thread liveCaptureThread([&]() {
-        std::printf("Live desktop capture started; updating the %s region\n", sourceName);
-        while (!liveCapture.stop.load())
-        {
-            DesktopImage frame;
-            if (captureDesktop(frame, "--fullscreen"))
+    std::thread liveCaptureThread;
+    if (!headTrackingDemoMode)
+    {
+        liveCaptureThread = std::thread([&]() {
+            std::printf("Live desktop capture started; updating the %s region\n", sourceName);
+            while (!liveCapture.stop.load())
             {
-                if (cropSourceDisplay)
+                DesktopImage frame;
+                if (captureDesktop(frame, "--fullscreen"))
                 {
-                    DesktopImage sourceFrame;
-                    if (!cropDisplay(frame, displayBounds[static_cast<size_t>(sourceDisplay)],
-                                     virtualLeft, virtualTop, sourceFrame))
+                    if (cropSourceDisplay)
                     {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                        continue;
+                        DesktopImage sourceFrame;
+                        if (!cropDisplay(frame, displayBounds[static_cast<size_t>(sourceDisplay)],
+                                         virtualLeft, virtualTop, sourceFrame))
+                        {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            continue;
+                        }
+                        frame = std::move(sourceFrame);
                     }
-                    frame = std::move(sourceFrame);
+                    std::lock_guard<std::mutex> lock(liveCapture.mutex);
+                    liveCapture.pending = std::move(frame);
+                    liveCapture.ready = true;
+                    ++liveCapture.frames;
                 }
-                std::lock_guard<std::mutex> lock(liveCapture.mutex);
-                liveCapture.pending = std::move(frame);
-                liveCapture.ready = true;
-                ++liveCapture.frames;
+                else
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            else
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-        }
-    });
+        });
+    }
 
     auto applyLiveFrame = [&](const DesktopImage &frame) {
         if ((cropSourceDisplay && (frame.width != desktop.width || frame.height != desktop.height)) ||
@@ -650,9 +700,11 @@ int main(int argc, char **argv)
 
     const float extraMonitorWidth = static_cast<float>(width);
     const float desktopX = extraMonitorWidth;
-    const float canvasWidth = desktopX + static_cast<float>(desktop.width);
+    const float canvasWidth = headTrackingDemoMode ? static_cast<float>(width) * 3.0f :
+                               desktopX + static_cast<float>(desktop.width);
     const float canvasHeight = static_cast<float>(height) * 3.0f;
-    const float desktopY = (canvasHeight - desktop.height) * 0.5f;
+    const float desktopY = headTrackingDemoMode ? static_cast<float>(height) :
+                            (canvasHeight - desktop.height) * 0.5f;
     glViewport(0, 0, width, height);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
@@ -699,7 +751,7 @@ int main(int argc, char **argv)
             else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_c)
             {
                 DesktopImage refreshed;
-                if (captureDesktop(refreshed, "--fullscreen"))
+                if (!headTrackingDemoMode && captureDesktop(refreshed, "--fullscreen"))
                 {
                     if (cropSourceDisplay)
                     {
@@ -869,7 +921,9 @@ int main(int argc, char **argv)
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
         glTranslatef(-viewX, -viewY, 0);
-        if (kdeWorkspaceMode || kdeTwoWorkspaceMode)
+        if (headTrackingDemoMode)
+            drawHeadTrackingPanels(width, height);
+        else if (kdeWorkspaceMode || kdeTwoWorkspaceMode)
             drawCapturedScreen(desktopTexture, static_cast<float>(width),
                                static_cast<float>(desktop.width),
                                static_cast<float>(width), static_cast<float>(height));
@@ -899,7 +953,8 @@ int main(int argc, char **argv)
         switchKdeDesktop(centerDesktop);
     Rayneo_DisableImu(ctx);
     Rayneo_Destroy(ctx);
-    glDeleteTextures(1, &desktopTexture);
+    if (desktopTexture != 0)
+        glDeleteTextures(1, &desktopTexture);
     SDL_GL_DeleteContext(glctx);
     SDL_DestroyWindow(window);
     SDL_Quit();
