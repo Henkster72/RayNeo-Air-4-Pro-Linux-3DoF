@@ -112,7 +112,8 @@ Use `rayneo` for the immediate colored-panel test. Use `rayneo --live` only
 when you explicitly want the slower experimental capture of the Samsung/source
 monitor. Live mode refreshes the source monitor and preserves the initial
 RayNeo-side image as a snapshot, because the RayNeo output is covered by the
-viewport while the program is running.
+viewport while the program is running. It is visual-only: the viewport hides
+its own cursor and does not yet forward mouse clicks to captured applications.
 
 The normal layout is deliberately simple:
 

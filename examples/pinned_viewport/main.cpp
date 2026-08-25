@@ -630,6 +630,7 @@ int main(int argc, char **argv)
     SDL_SetWindowPosition(window, bounds.x, bounds.y);
     SDL_ShowWindow(window);
     SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    SDL_ShowCursor(SDL_DISABLE);
     SDL_GLContext glctx = SDL_GL_CreateContext(window);
     if (!glctx)
     {
@@ -1000,6 +1001,7 @@ int main(int argc, char **argv)
     Rayneo_Destroy(ctx);
     if (desktopTexture != 0)
         glDeleteTextures(1, &desktopTexture);
+    SDL_ShowCursor(SDL_ENABLE);
     SDL_GL_DeleteContext(glctx);
     SDL_DestroyWindow(window);
     SDL_Quit();
