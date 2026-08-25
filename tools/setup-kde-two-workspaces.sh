@@ -29,6 +29,7 @@ gdbus call --session \
     --method org.freedesktop.DBus.Properties.Set \
     org.kde.KWin.VirtualDesktopManager rows '<uint32 1>' >/dev/null
 qdbus6 org.kde.KWin /KWin setCurrentDesktop 1 >/dev/null
+"$script_dir/place-rayneo-browser-right.sh"
 "$script_dir/enable-rayneo-kwin-sticky.sh"
 
 cat <<'EOF'
@@ -36,5 +37,6 @@ Simple RayNeo workspace setup ready:
   desktop 1: Center
   desktop 2: Right
 
-Put Chrome/YouTube on the source monitor of desktop 2.
+Existing Chrome/Chromium windows are placed on the source monitor of desktop 2.
+If Chrome was not open yet, open it and run this setup helper again.
 EOF

@@ -123,9 +123,11 @@ normal when two 2560x1440 outputs are connected. KDE exposes them as one
 crops that capture back to the selected source monitor, so the RayNeo texture is
 2560x1440 rather than a split 5120-pixel image.
 
-For the first setup, switch KDE to the `Right` desktop, open Chrome/YouTube on
-your source monitor, then switch back to `Center`. The launcher returns to
-`Center` before starting, and looking right selects the live `Right` desktop.
+For the first setup, leave Chrome/YouTube open. The launcher places existing
+Chrome/Chromium windows on the source monitor of the `Right` desktop, then
+returns to `Center` before starting. Looking right selects the live `Right`
+desktop. If Chrome was opened after the launcher, run
+`tools/place-rayneo-browser-right.sh` once.
 Keep the glasses still for the first second while it says `Gyro calibrated`.
 
 Press `R` to recenter, `C` to refresh the capture immediately, or `Esc` to
