@@ -2,8 +2,19 @@
 #include <thread>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 
 #include "rayneo_api.h"
+
+static uint16_t readHexEnvironment(const char *name, uint16_t fallback) {
+    const char *text = std::getenv(name);
+    if (!text || !*text)
+        return fallback;
+    char *end = nullptr;
+    const unsigned long value = std::strtoul(text, &end, 16);
+    return end != text && *end == '\0' && value <= 0xfffful ?
+        static_cast<uint16_t>(value) : fallback;
+}
 
 static const char* Rayneo_NotifyCodeToString(int code) {
     switch (code) {
@@ -29,8 +40,9 @@ int main() {
         return 1;
     }
 
-    const uint16_t kVid = 0x1BBB; 
-    const uint16_t kPid = 0xAF50;
+    const uint16_t kVid = readHexEnvironment("RAYNEO_VID", 0x1BBB);
+    const uint16_t kPid = readHexEnvironment("RAYNEO_PID", 0xAF50);
+    std::cout << "Target USB: " << std::hex << kVid << ":" << kPid << std::dec << "\n";
     Rayneo_SetTargetVidPid(ctx, kVid, kPid);
 
     if (Rayneo_Start(ctx, 0) != RAYNEO_OK) {

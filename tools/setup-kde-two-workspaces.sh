@@ -36,5 +36,5 @@ Simple RayNeo workspace setup ready:
   desktop 1: Center
   desktop 2: Right
 
-Put Chrome/YouTube on the Samsung output of desktop 2.
+Put Chrome/YouTube on the source monitor of desktop 2.
 EOF

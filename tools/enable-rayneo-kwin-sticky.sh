@@ -13,4 +13,4 @@ qdbus6 org.kde.KWin /Scripting unloadScript rayneo-kwin-sticky >/dev/null 2>&1 |
 script_id=$(qdbus6 org.kde.KWin /Scripting loadScript "$script_path" rayneo-kwin-sticky)
 qdbus6 org.kde.KWin "/Scripting/Script${script_id}" org.kde.kwin.Script.run >/dev/null
 
-echo "KWin integration enabled: the RayNeo viewport will stay visible on all desktops."
+echo "KWin integration enabled: the RayNeo viewport is pinned to the RayNeo output on all desktops."

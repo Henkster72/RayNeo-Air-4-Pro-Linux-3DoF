@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+script_path="${BASH_SOURCE[0]}"
+while [[ -L "$script_path" ]]; do
+    script_dir=$(cd -P -- "$(dirname -- "$script_path")" && pwd)
+    script_path=$(readlink -- "$script_path")
+    [[ "$script_path" == /* ]] || script_path="$script_dir/$script_path"
+done
+repo_dir=$(cd -P -- "$(dirname -- "$script_path")" && pwd)
 viewer="$repo_dir/build/examples/pinned_viewport/RayNeoPinnedViewport"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -35,11 +41,26 @@ for command_name in cmake qdbus6 gdbus spectacle; do
     fi
 done
 
+rayneo_vid="${RAYNEO_VID:-1bbb}"
+rayneo_pid="${RAYNEO_PID:-af50}"
+rayneo_vid="${rayneo_vid#0x}"
+rayneo_vid="${rayneo_vid#0X}"
+rayneo_pid="${rayneo_pid#0x}"
+rayneo_pid="${rayneo_pid#0X}"
+if [[ ! "$rayneo_vid" =~ ^[0-9a-fA-F]{1,4}$ ||
+      ! "$rayneo_pid" =~ ^[0-9a-fA-F]{1,4}$ ]]; then
+    echo "RAYNEO_VID and RAYNEO_PID must be hexadecimal USB IDs." >&2
+    exit 1
+fi
+rayneo_vid=$(printf '%04x' "$((16#$rayneo_vid))")
+rayneo_pid=$(printf '%04x' "$((16#$rayneo_pid))")
+echo "Target USB: $rayneo_vid:$rayneo_pid"
+
 if command -v lsusb >/dev/null 2>&1; then
-    if usb_device=$(lsusb -d 1bbb:af50 2>/dev/null); then
+    if usb_device=$(lsusb -d "$rayneo_vid:$rayneo_pid" 2>/dev/null); then
         echo "USB: $usb_device"
     else
-        echo "Warning: lsusb could not verify 1bbb:af50; the SDK will test the device."
+        echo "Warning: lsusb could not verify $rayneo_vid:$rayneo_pid; the SDK will test the device."
     fi
 else
     echo "Warning: lsusb is not installed; USB detection will be checked by the SDK."
@@ -50,6 +71,10 @@ if [[ ! -x "$viewer" ]]; then
     cmake -B "$repo_dir/build" \
         -DRAYNEO_BUILD_EXAMPLES=ON \
         -DRAYNEO_BUILD_OPENVR_DRIVER=OFF
+    cmake --build "$repo_dir/build" -j"$(nproc)"
+elif [[ "$repo_dir/examples/pinned_viewport/main.cpp" -nt "$viewer" ||
+        "$repo_dir/src/RayneoApi.cpp" -nt "$viewer" ]]; then
+    echo "Source changed; rebuilding the viewer."
     cmake --build "$repo_dir/build" -j"$(nproc)"
 else
     echo "Viewer already built; skipping rebuild."

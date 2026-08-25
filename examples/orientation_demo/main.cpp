@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <thread>
 #include <string>
+#include <cstdlib>
 #include "rayneo_api.h"
 
 #include <SDL.h>
@@ -22,6 +23,17 @@ struct Orientation
 {
     float yaw{0}, pitch{0}, roll{0};
 };
+
+static uint16_t readHexEnvironment(const char *name, uint16_t fallback)
+{
+    const char *text = std::getenv(name);
+    if (!text || !*text)
+        return fallback;
+    char *end = nullptr;
+    const unsigned long value = std::strtoul(text, &end, 16);
+    return end != text && *end == '\0' && value <= 0xfffful ?
+        static_cast<uint16_t>(value) : fallback;
+}
 
 struct Quaternion
 {
@@ -309,13 +321,16 @@ int main()
         printf("Create failed\n");
         return 1;
     }
-    Rayneo_SetTargetVidPid(ctx, 0x1BBB, 0xAF50);
+    const uint16_t vid = readHexEnvironment("RAYNEO_VID", 0x1BBB);
+    const uint16_t pid = readHexEnvironment("RAYNEO_PID", 0xAF50);
+    printf("Target USB: %04X:%04X\n", vid, pid);
+    Rayneo_SetTargetVidPid(ctx, vid, pid);
     auto startRc = Rayneo_Start(ctx, 0);
     if (startRc != RAYNEO_OK)
     {
         printf("Start failed: %d (%s). Possible reasons: device not connected, wrong VID/PID, libusb DLL missing, driver conflict.\n",
                startRc, Rayneo_ResultToString((RAYNEO_Result)startRc));
-        printf("Expected VID:PID = %04X:%04X\n", 0x1BBB, 0xAF50);
+        printf("Expected VID:PID = %04X:%04X\n", vid, pid);
         printf("Check that libusb-1.0.dll is present next to the EXE.\n");
 #ifndef __APPLE__
         // // Attempt to enumerate available USB devices for diagnostics

@@ -38,6 +38,44 @@ struct DesktopImage
     std::vector<uint8_t> pixels;
 };
 
+static uint16_t readHexEnvironment(const char *name, uint16_t fallback)
+{
+    const char *text = std::getenv(name);
+    if (!text || !*text)
+        return fallback;
+    char *end = nullptr;
+    const unsigned long value = std::strtoul(text, &end, 16);
+    if (end == text || *end != '\0' || value > 0xfffful)
+    {
+        std::printf("Invalid %s=%s; using default %04x\n", name, text, fallback);
+        return fallback;
+    }
+    return static_cast<uint16_t>(value);
+}
+
+static bool cropDisplay(const DesktopImage &full, const SDL_Rect &bounds,
+                        int virtualLeft, int virtualTop, DesktopImage &cropped)
+{
+    const int x = bounds.x - virtualLeft;
+    const int y = bounds.y - virtualTop;
+    if (x < 0 || y < 0 || bounds.w <= 0 || bounds.h <= 0 ||
+        x + bounds.w > full.width || y + bounds.h > full.height)
+        return false;
+
+    cropped.width = bounds.w;
+    cropped.height = bounds.h;
+    cropped.pixels.resize(static_cast<size_t>(bounds.w) * bounds.h * 4);
+    for (int row = 0; row < bounds.h; ++row)
+    {
+        const uint8_t *source = full.pixels.data() +
+            (static_cast<size_t>(y + row) * full.width + x) * 4;
+        uint8_t *destination = cropped.pixels.data() +
+            static_cast<size_t>(row) * bounds.w * 4;
+        std::memcpy(destination, source, static_cast<size_t>(bounds.w) * 4);
+    }
+    return true;
+}
+
 static uint16_t readLe16(const uint8_t *p)
 {
     return static_cast<uint16_t>(p[0] | (p[1] << 8));
@@ -331,14 +369,14 @@ static void drawDesktop(GLuint texture, float desktopX, float extraWidth,
     glBindTexture(GL_TEXTURE_2D, texture);
     glColor3f(1, 1, 1);
     glBegin(GL_QUADS);
-    // Extra virtual monitor: reuse the captured Samsung region on the left.
+    // Extra virtual monitor: reuse the captured source region on the left.
     const float extraTextureWidth = extraWidth / desktopWidth;
     glTexCoord2f(0, 0); glVertex2f(0, desktopY);
     glTexCoord2f(extraTextureWidth, 0); glVertex2f(extraWidth, desktopY);
     glTexCoord2f(extraTextureWidth, 1); glVertex2f(extraWidth, desktopY + desktopHeight);
     glTexCoord2f(0, 1); glVertex2f(0, desktopY + desktopHeight);
 
-    // Captured desktop: Samsung followed by the existing right-hand region.
+    // Captured desktop: source monitor followed by the existing right-hand region.
     glTexCoord2f(0, 0); glVertex2f(desktopX, desktopY);
     glTexCoord2f(1, 0); glVertex2f(desktopX + desktopWidth, desktopY);
     glTexCoord2f(1, 1); glVertex2f(desktopX + desktopWidth, desktopY + desktopHeight);
@@ -409,33 +447,111 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    DesktopImage desktop;
-    if (!captureDesktop(desktop, "--fullscreen"))
-    {
-        SDL_Quit();
-        return 1;
-    }
-    std::printf("Captured desktop: %dx%d\n", desktop.width, desktop.height);
-
     int targetDisplay = 0;
     const int displayCount = SDL_GetNumVideoDisplays();
     std::printf("Displays: %d\n", displayCount);
+    std::vector<SDL_Rect> displayBounds(static_cast<size_t>(std::max(0, displayCount)));
+    int virtualLeft = 0;
+    int virtualTop = 0;
+    bool haveVirtualBounds = false;
+    const char *displaySelector = std::getenv("RAYNEO_DISPLAY");
+    bool displaySelected = false;
     for (int i = 0; i < displayCount; ++i)
     {
         const char *name = SDL_GetDisplayName(i);
         std::printf("  %d: %s\n", i, name ? name : "(unnamed)");
-        if (name && (std::strcmp(name, "DP-3") == 0 ||
-                     std::strstr(name, "SmartGlasses") != nullptr ||
+        SDL_GetDisplayBounds(i, &displayBounds[static_cast<size_t>(i)]);
+        const SDL_Rect &bounds = displayBounds[static_cast<size_t>(i)];
+        bool matchesTarget = false;
+        if (!haveVirtualBounds)
+        {
+            virtualLeft = bounds.x;
+            virtualTop = bounds.y;
+            haveVirtualBounds = true;
+        }
+        else
+        {
+            virtualLeft = std::min(virtualLeft, bounds.x);
+            virtualTop = std::min(virtualTop, bounds.y);
+        }
+        if (displaySelector && *displaySelector)
+        {
+            char *end = nullptr;
+            const long selectedIndex = std::strtol(displaySelector, &end, 10);
+            if (end != displaySelector && *end == '\0' && selectedIndex == i)
+                matchesTarget = true;
+            else if (name && std::strstr(name, displaySelector) != nullptr)
+                matchesTarget = true;
+        }
+        if ((!displaySelector || !*displaySelector) && name &&
+            (std::strstr(name, "SmartGlasses") != nullptr ||
                      std::strstr(name, "RayNeo") != nullptr))
+            matchesTarget = true;
+        if (matchesTarget)
+        {
             targetDisplay = i;
+            displaySelected = true;
+        }
+    }
+    if (!displaySelected && displayCount > 1)
+    {
+        targetDisplay = displayCount - 1;
+        std::printf("No RayNeo output name matched; using display %d. Set RAYNEO_DISPLAY to an index or name if needed.\n",
+                    targetDisplay);
     }
     std::printf("Target display: %d: %s\n", targetDisplay,
                 SDL_GetDisplayName(targetDisplay));
 
-    SDL_Rect bounds{};
+    int sourceDisplay = -1;
+    for (int i = 0; i < displayCount; ++i)
+    {
+        if (i != targetDisplay)
+        {
+            sourceDisplay = i;
+            break;
+        }
+    }
+    if ((kdeWorkspaceMode || kdeTwoWorkspaceMode) && sourceDisplay < 0)
+    {
+        std::printf("A separate source monitor is required for KDE workspace mode\n");
+        SDL_Quit();
+        return 1;
+    }
+    const bool cropSourceDisplay = kdeWorkspaceMode || kdeTwoWorkspaceMode;
+    const char *sourceName = sourceDisplay >= 0 ?
+        SDL_GetDisplayName(sourceDisplay) : "full desktop";
+    if (cropSourceDisplay)
+        std::printf("Source display: %d: %s\n", sourceDisplay, sourceName ? sourceName : "(unnamed)");
+
+    DesktopImage desktop;
+    DesktopImage captured;
+    if (!captureDesktop(captured, "--fullscreen"))
+    {
+        SDL_Quit();
+        return 1;
+    }
+    std::printf("Captured desktop: %dx%d\n", captured.width, captured.height);
+    if (cropSourceDisplay)
+    {
+        if (!cropDisplay(captured, displayBounds[static_cast<size_t>(sourceDisplay)],
+                         virtualLeft, virtualTop, desktop))
+        {
+            std::printf("Could not extract the source monitor from the desktop capture\n");
+            SDL_Quit();
+            return 1;
+        }
+        std::printf("Using source monitor image: %dx%d\n", desktop.width, desktop.height);
+    }
+    else
+        desktop = std::move(captured);
+
+    SDL_Rect bounds = displayBounds[static_cast<size_t>(targetDisplay)];
     SDL_GetDisplayBounds(targetDisplay, &bounds);
+    std::string windowTitle = "RayNeo pinned viewport";
+    if (const char *targetName = SDL_GetDisplayName(targetDisplay))
+        windowTitle += " - " + std::string(targetName);
     SDL_Window *window = SDL_CreateWindow(
-        "RayNeo pinned viewport", bounds.x, bounds.y, bounds.w, bounds.h,
+        windowTitle.c_str(), bounds.x, bounds.y, bounds.w, bounds.h,
         SDL_WINDOW_OPENGL | SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN);
     if (!window)
     {
@@ -457,7 +573,9 @@ int main(int argc, char **argv)
 
     RAYNEO_Context ctx{};
     if (Rayneo_Create(&ctx) != RAYNEO_OK ||
-        Rayneo_SetTargetVidPid(ctx, 0x1BBB, 0xAF50) != RAYNEO_OK ||
+        Rayneo_SetTargetVidPid(ctx,
+                               readHexEnvironment("RAYNEO_VID", 0x1BBB),
+                               readHexEnvironment("RAYNEO_PID", 0xAF50)) != RAYNEO_OK ||
         Rayneo_Start(ctx, 0) != RAYNEO_OK ||
         Rayneo_EnableImu(ctx) != RAYNEO_OK)
     {
@@ -476,12 +594,23 @@ int main(int argc, char **argv)
 
     LiveCapture liveCapture;
     std::thread liveCaptureThread([&]() {
-        std::printf("Live desktop capture started; updating the Samsung region\n");
+        std::printf("Live desktop capture started; updating the %s region\n", sourceName);
         while (!liveCapture.stop.load())
         {
             DesktopImage frame;
             if (captureDesktop(frame, "--fullscreen"))
             {
+                if (cropSourceDisplay)
+                {
+                    DesktopImage sourceFrame;
+                    if (!cropDisplay(frame, displayBounds[static_cast<size_t>(sourceDisplay)],
+                                     virtualLeft, virtualTop, sourceFrame))
+                    {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        continue;
+                    }
+                    frame = std::move(sourceFrame);
+                }
                 std::lock_guard<std::mutex> lock(liveCapture.mutex);
                 liveCapture.pending = std::move(frame);
                 liveCapture.ready = true;
@@ -495,18 +624,21 @@ int main(int argc, char **argv)
     });
 
     auto applyLiveFrame = [&](const DesktopImage &frame) {
-        if (frame.width < width || frame.height != height ||
-            desktop.width < width || desktop.height < height)
+        if ((cropSourceDisplay && (frame.width != desktop.width || frame.height != desktop.height)) ||
+            (!cropSourceDisplay && (frame.width < width || frame.height != height ||
+                                    desktop.width < width || desktop.height < height)))
             return;
-        for (int y = 0; y < height; ++y)
+        const int copyWidth = cropSourceDisplay ? desktop.width : width;
+        const int copyHeight = cropSourceDisplay ? desktop.height : height;
+        for (int y = 0; y < copyHeight; ++y)
         {
             std::memcpy(desktop.pixels.data() + static_cast<size_t>(y) * desktop.width * 4,
                         frame.pixels.data() + static_cast<size_t>(y) * frame.width * 4,
-                        static_cast<size_t>(width) * 4);
+                        static_cast<size_t>(copyWidth) * 4);
         }
         glBindTexture(GL_TEXTURE_2D, desktopTexture);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, desktop.width);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, copyWidth, copyHeight,
                         GL_RGBA, GL_UNSIGNED_BYTE, desktop.pixels.data());
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     };
@@ -559,6 +691,15 @@ int main(int argc, char **argv)
                 DesktopImage refreshed;
                 if (captureDesktop(refreshed, "--fullscreen"))
                 {
+                    if (cropSourceDisplay)
+                    {
+                        DesktopImage sourceFrame;
+                        if (!cropDisplay(refreshed,
+                                         displayBounds[static_cast<size_t>(sourceDisplay)],
+                                         virtualLeft, virtualTop, sourceFrame))
+                            continue;
+                        refreshed = std::move(sourceFrame);
+                    }
                     applyLiveFrame(refreshed);
                     std::printf("Live desktop frame refreshed\n");
                 }
