@@ -530,7 +530,8 @@ int main(int argc, char **argv)
         SDL_Quit();
         return 1;
     }
-    std::printf("Captured desktop: %dx%d\n", captured.width, captured.height);
+    std::printf("Captured combined desktop framebuffer: %dx%d\n",
+                captured.width, captured.height);
     if (cropSourceDisplay)
     {
         if (!cropDisplay(captured, displayBounds[static_cast<size_t>(sourceDisplay)],
@@ -675,6 +676,9 @@ int main(int argc, char **argv)
     uint64_t samples = 0;
     double lastReport = 0;
     uint32_t lastWorkspaceAttempt = 0;
+    uint32_t workspaceCooldownUntil = 0;
+    uint32_t pendingWorkspaceSince = 0;
+    int pendingWorkspaceSlot = -1;
     int failedWorkspaceSlot = -1;
     while (running && !stopRequested)
     {
@@ -737,7 +741,10 @@ int main(int argc, char **argv)
         float viewY = 0;
         if (kdeTwoWorkspaceMode)
         {
-            const float horizontal = -yaw * 57.2958f;
+            // The tested Air 4 Pro orientation reports a negative yaw when
+            // the wearer turns right. Keep the physical layout intuitive:
+            // looking right selects the Right KDE desktop.
+            const float horizontal = yaw * 57.2958f;
             const float enterAngle = 18.0f;
             const float returnAngle = 10.0f;
             int desiredSlot = workspaceSlot;
@@ -747,27 +754,41 @@ int main(int argc, char **argv)
                 desiredSlot = 0;
 
             const uint32_t nowTicks = SDL_GetTicks();
-            const bool retryAllowed = desiredSlot != failedWorkspaceSlot ||
-                                      nowTicks - lastWorkspaceAttempt >= 1000;
-            if (desiredSlot != workspaceSlot && retryAllowed)
+            if (desiredSlot != workspaceSlot)
             {
-                const int targetDesktop = centerDesktop + desiredSlot;
-                lastWorkspaceAttempt = nowTicks;
-                if ((targetDesktop == 1 || targetDesktop == 2) &&
-                    switchKdeDesktop(targetDesktop))
+                if (pendingWorkspaceSlot != desiredSlot)
                 {
-                    workspaceSlot = desiredSlot;
-                    failedWorkspaceSlot = -1;
-                    std::printf("KDE workspace switched to %s (desktop %d)\n",
-                                workspaceSlot == 0 ? "Center" : "Right", targetDesktop);
+                    pendingWorkspaceSlot = desiredSlot;
+                    pendingWorkspaceSince = nowTicks;
                 }
-                else if (!stopRequested)
+                const bool stableLongEnough = nowTicks - pendingWorkspaceSince >= 150;
+                const bool retryAllowed = desiredSlot != failedWorkspaceSlot ||
+                                          nowTicks - lastWorkspaceAttempt >= 1000;
+                const bool cooldownExpired = nowTicks >= workspaceCooldownUntil;
+                if (stableLongEnough && retryAllowed && cooldownExpired)
                 {
-                    failedWorkspaceSlot = desiredSlot;
-                    std::printf("Could not switch to KDE desktop %d; run tools/setup-kde-two-workspaces.sh first\n",
-                                targetDesktop);
+                    const int targetDesktop = centerDesktop + desiredSlot;
+                    lastWorkspaceAttempt = nowTicks;
+                    if ((targetDesktop == 1 || targetDesktop == 2) &&
+                        switchKdeDesktop(targetDesktop))
+                    {
+                        workspaceSlot = desiredSlot;
+                        pendingWorkspaceSlot = -1;
+                        failedWorkspaceSlot = -1;
+                        workspaceCooldownUntil = nowTicks + 350;
+                        std::printf("KDE workspace switched to %s (desktop %d)\n",
+                                    workspaceSlot == 0 ? "Center" : "Right", targetDesktop);
+                    }
+                    else if (!stopRequested)
+                    {
+                        failedWorkspaceSlot = desiredSlot;
+                        std::printf("Could not switch to KDE desktop %d; run tools/setup-kde-two-workspaces.sh first\n",
+                                    targetDesktop);
+                    }
                 }
             }
+            else
+                pendingWorkspaceSlot = -1;
         }
         else if (kdeWorkspaceMode)
         {
@@ -868,6 +889,8 @@ int main(int argc, char **argv)
     liveCapture.stop.store(true);
     if (liveCaptureThread.joinable())
         liveCaptureThread.join();
+    if (kdeTwoWorkspaceMode && workspaceSlot != 0)
+        switchKdeDesktop(centerDesktop);
     Rayneo_DisableImu(ctx);
     Rayneo_Destroy(ctx);
     glDeleteTextures(1, &desktopTexture);

@@ -32,5 +32,20 @@ function keepRayNeoViewportVisible(window) {
     }
 }
 
-workspace.stackingOrder.forEach(keepRayNeoViewportVisible);
-workspace.windowAdded.connect(keepRayNeoViewportVisible);
+function watchRayNeoViewport(window) {
+    if (!window || window.caption.indexOf("RayNeo pinned viewport") !== 0)
+        return;
+
+    keepRayNeoViewportVisible(window);
+    // SDL negotiates fullscreen after the Wayland window is created. KWin may
+    // therefore move it again; re-pin after those state changes.
+    window.outputChanged.connect(function() {
+        keepRayNeoViewportVisible(window);
+    });
+    window.fullScreenChanged.connect(function() {
+        keepRayNeoViewportVisible(window);
+    });
+}
+
+workspace.stackingOrder.forEach(watchRayNeoViewport);
+workspace.windowAdded.connect(watchRayNeoViewport);

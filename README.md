@@ -117,6 +117,12 @@ Right  = a live Chrome/YouTube desktop
 RayNeo = the head-tracked viewer
 ```
 
+Seeing `Captured combined desktop framebuffer: 5120x1440` in the terminal is
+normal when two 2560x1440 outputs are connected. KDE exposes them as one
+5120x1440 virtual framebuffer. In the two-workspace mode the viewer immediately
+crops that capture back to the selected source monitor, so the RayNeo texture is
+2560x1440 rather than a split 5120-pixel image.
+
 For the first setup, switch KDE to the `Right` desktop, open Chrome/YouTube on
 your source monitor, then switch back to `Center`. The launcher returns to
 `Center` before starting, and looking right selects the live `Right` desktop.
