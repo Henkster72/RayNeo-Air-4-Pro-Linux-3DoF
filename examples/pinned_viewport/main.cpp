@@ -21,6 +21,15 @@
 #include <SDL.h>
 #include <SDL_opengl.h>
 
+#ifdef RAYNEO_HAVE_PORTAL
+#include "portal_capture.h"
+#include <SDL_syswm.h>
+#include <wayland-client.h>
+
+constexpr uint32_t kPortalMonitorSource = 1;
+constexpr uint32_t kPortalWindowSource = 2;
+#endif
+
 struct Quaternion
 {
     float w{1}, x{0}, y{0}, z{0};
@@ -271,6 +280,8 @@ public:
         calibrationSamples_ = 0;
         lastTick_ = 0;
         stillSamples_ = 0;
+        referencePitch_ = 0;
+        referenceRoll_ = 0;
         bias_[0] = bias_[1] = bias_[2] = 0;
         q_ = Quaternion{};
         orientation_ = Orientation{};
@@ -289,12 +300,24 @@ public:
             if (rawMagnitude >= kStationaryDps)
             {
                 calibrationSamples_ = 0;
+                referencePitch_ = referenceRoll_ = 0;
                 bias_[0] = bias_[1] = bias_[2] = 0;
                 lastTick_ = s.tick;
                 return false;
             }
             for (int i = 0; i < 3; ++i)
                 bias_[i] = (bias_[i] * calibrationSamples_ + s.gyroDps[i]) / (calibrationSamples_ + 1);
+            const float acceleration = std::sqrt(
+                s.acc[0] * s.acc[0] + s.acc[1] * s.acc[1] + s.acc[2] * s.acc[2]);
+            if (acceleration > 8.0f && acceleration < 11.5f)
+            {
+                const float accelPitch = std::atan2(-s.acc[2], s.acc[1]);
+                const float accelRoll = std::atan2(s.acc[0], s.acc[1]);
+                referencePitch_ = (referencePitch_ * calibrationSamples_ + accelPitch) /
+                                  (calibrationSamples_ + 1);
+                referenceRoll_ = (referenceRoll_ * calibrationSamples_ + accelRoll) /
+                                 (calibrationSamples_ + 1);
+            }
             ++calibrationSamples_;
             lastTick_ = s.tick;
             if (calibrationSamples_ >= 500)
@@ -343,7 +366,25 @@ public:
                                       0.5f * rate[1] * dt,
                                       0.5f * rate[2] * dt});
         normalize(q_);
-        updateEuler(q_, orientation_);
+        Orientation gyroOrientation;
+        updateEuler(q_, gyroOrientation);
+        orientation_ = gyroOrientation;
+
+        // Gyro integration is responsive but drifts vertically. Gravity gives
+        // a stable pitch/roll reference; blend it gently so quick head motion
+        // remains smooth while long sessions do not slide downward.
+        const float acceleration = std::sqrt(
+            s.acc[0] * s.acc[0] + s.acc[1] * s.acc[1] + s.acc[2] * s.acc[2]);
+        if (acceleration > 8.0f && acceleration < 11.5f)
+        {
+            const float accelPitch = std::atan2(-s.acc[2], s.acc[1]) - referencePitch_;
+            const float accelRoll = std::atan2(s.acc[0], s.acc[1]) - referenceRoll_;
+            constexpr float kGravityCorrection = 0.02f;
+            orientation_.pitch = orientation_.pitch * (1.0f - kGravityCorrection) +
+                                 accelPitch * kGravityCorrection;
+            orientation_.roll = orientation_.roll * (1.0f - kGravityCorrection) +
+                                accelRoll * kGravityCorrection;
+        }
         return true;
     }
 
@@ -357,6 +398,8 @@ private:
     int calibrationSamples_{0};
     uint32_t lastTick_{0};
     int stillSamples_{0};
+    float referencePitch_{0};
+    float referenceRoll_{0};
     float bias_[3]{0, 0, 0};
     Quaternion q_{};
     Orientation orientation_{};
@@ -450,6 +493,138 @@ static GLuint uploadDesktop(const DesktopImage &image)
     return texture;
 }
 
+#ifdef RAYNEO_HAVE_PORTAL
+static void uploadPortalFrame(GLuint &texture, const PortalFrame &frame)
+{
+    if (frame.width <= 0 || frame.height <= 0 || frame.stride < frame.width * 4 ||
+        frame.pixels.empty())
+        return;
+    if (texture == 0)
+    {
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+    }
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, frame.stride / 4);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, frame.width, frame.height, 0,
+                 frame.bgra ? GL_BGRA : GL_RGBA, GL_UNSIGNED_BYTE, frame.pixels.data());
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+}
+
+static void drawPortalScreen(GLuint texture, const PortalFrame &frame,
+                             float x, float y, float width, float height,
+                             float textureLeft = 0.0f, float textureRight = 1.0f)
+{
+    if (texture == 0 || frame.width <= 0 || frame.height <= 0)
+        return;
+
+    const float sourceAspect = static_cast<float>(frame.width) *
+                               (textureRight - textureLeft) / frame.height;
+    const float panelAspect = width / height;
+    if (sourceAspect > panelAspect)
+    {
+        const float drawnHeight = width / sourceAspect;
+        y += (height - drawnHeight) * 0.5f;
+        height = drawnHeight;
+    }
+    else
+    {
+        const float drawnWidth = height * sourceAspect;
+        x += (width - drawnWidth) * 0.5f;
+        width = drawnWidth;
+    }
+
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glColor3f(1, 1, 1);
+    glBegin(GL_QUADS);
+    glTexCoord2f(textureLeft, 0); glVertex2f(x, y);
+    glTexCoord2f(textureRight, 0); glVertex2f(x + width, y);
+    glTexCoord2f(textureRight, 1); glVertex2f(x + width, y + height);
+    glTexCoord2f(textureLeft, 1); glVertex2f(x, y + height);
+    glEnd();
+    glDisable(GL_TEXTURE_2D);
+}
+
+struct WaylandInputRegion
+{
+    wl_display *display{nullptr};
+    wl_registry *registry{nullptr};
+    wl_compositor *compositor{nullptr};
+    wl_surface *surface{nullptr};
+
+    static void onGlobal(void *data, wl_registry *registry, uint32_t name,
+                         const char *interface, uint32_t version)
+    {
+        auto *self = static_cast<WaylandInputRegion *>(data);
+        if (std::strcmp(interface, wl_compositor_interface.name) == 0)
+            self->compositor = static_cast<wl_compositor *>(wl_registry_bind(
+                registry, name, &wl_compositor_interface, std::min(version, 4u)));
+    }
+
+    static void onGlobalRemove(void *, wl_registry *, uint32_t) {}
+
+    bool init(SDL_Window *window)
+    {
+        SDL_SysWMinfo info{};
+        SDL_VERSION(&info.version);
+        if (!SDL_GetWindowWMInfo(window, &info) || info.subsystem != SDL_SYSWM_WAYLAND)
+            return false;
+        display = info.info.wl.display;
+        surface = info.info.wl.surface;
+        registry = wl_display_get_registry(display);
+        if (!registry)
+            return false;
+        static const wl_registry_listener listener = {onGlobal, onGlobalRemove};
+        wl_registry_add_listener(registry, &listener, this);
+        wl_display_roundtrip(display);
+        return compositor != nullptr && surface != nullptr;
+    }
+
+    void setInteractive(bool interactive, int height = 0)
+    {
+        if (!compositor || !surface)
+            return;
+        if (interactive)
+        {
+            wl_surface_set_input_region(surface, nullptr);
+        }
+        else
+        {
+            wl_region *region = wl_compositor_create_region(compositor);
+            wl_region_add(region, 0, 0, 12, height);
+            wl_surface_set_input_region(surface, region);
+            wl_region_destroy(region);
+        }
+        wl_surface_commit(surface);
+        wl_display_flush(display);
+    }
+
+    void reset()
+    {
+        setInteractive(true);
+        if (compositor)
+        {
+            wl_compositor_destroy(compositor);
+            compositor = nullptr;
+        }
+        if (registry)
+        {
+            wl_registry_destroy(registry);
+            registry = nullptr;
+        }
+        surface = nullptr;
+        display = nullptr;
+    }
+};
+
+#endif
+
 int main(int argc, char **argv)
 {
     std::signal(SIGINT, handleStopSignal);
@@ -459,6 +634,7 @@ int main(int argc, char **argv)
     bool kdeTwoWorkspaceMode = false;
     bool pinnedSourceMode = false;
     bool headTrackingDemoMode = false;
+    bool portalLiveMode = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--kde-workspaces") == 0)
@@ -469,10 +645,13 @@ int main(int argc, char **argv)
             pinnedSourceMode = true;
         else if (std::strcmp(argv[i], "--headtracking") == 0)
             headTrackingDemoMode = true;
+        else if (std::strcmp(argv[i], "--portal-live") == 0)
+            portalLiveMode = true;
         else if (std::strcmp(argv[i], "--help") == 0)
         {
-            std::printf("Usage: %s [--headtracking|--pinned-source|--kde-two-workspaces|--kde-workspaces]\n", argv[0]);
+            std::printf("Usage: %s [--headtracking|--portal-live|--pinned-source|--kde-two-workspaces|--kde-workspaces]\n", argv[0]);
             std::printf("  --headtracking        render immediate synthetic panels; do not capture the desktop\n");
+            std::printf("  --portal-live         use KDE PipeWire capture and pointer forwarding\n");
             std::printf("  --pinned-source       track a cropped source monitor without switching KDE desktops\n");
             std::printf("  --kde-two-workspaces  switch Center/Right KDE workspaces\n");
             std::printf("  --kde-workspaces       switch the advanced 3x3 KDE grid\n");
@@ -495,6 +674,8 @@ int main(int argc, char **argv)
     std::vector<SDL_Rect> displayBounds(static_cast<size_t>(std::max(0, displayCount)));
     int virtualLeft = 0;
     int virtualTop = 0;
+    int virtualRight = 0;
+    int virtualBottom = 0;
     bool haveVirtualBounds = false;
     const char *displaySelector = std::getenv("RAYNEO_DISPLAY");
     bool displaySelected = false;
@@ -509,12 +690,16 @@ int main(int argc, char **argv)
         {
             virtualLeft = bounds.x;
             virtualTop = bounds.y;
+            virtualRight = bounds.x + bounds.w;
+            virtualBottom = bounds.y + bounds.h;
             haveVirtualBounds = true;
         }
         else
         {
             virtualLeft = std::min(virtualLeft, bounds.x);
             virtualTop = std::min(virtualTop, bounds.y);
+            virtualRight = std::max(virtualRight, bounds.x + bounds.w);
+            virtualBottom = std::max(virtualBottom, bounds.y + bounds.h);
         }
         if (displaySelector && *displaySelector)
         {
@@ -553,14 +738,14 @@ int main(int argc, char **argv)
             break;
         }
     }
-    if (!headTrackingDemoMode &&
+    if (!headTrackingDemoMode && !portalLiveMode &&
         (kdeWorkspaceMode || kdeTwoWorkspaceMode || pinnedSourceMode) && sourceDisplay < 0)
     {
         std::printf("A separate source monitor is required for KDE workspace mode\n");
         SDL_Quit();
         return 1;
     }
-    const bool cropSourceDisplay = !headTrackingDemoMode &&
+    const bool cropSourceDisplay = !headTrackingDemoMode && !portalLiveMode &&
                                    (pinnedSourceMode || kdeWorkspaceMode || kdeTwoWorkspaceMode);
     const char *sourceName = sourceDisplay >= 0 ?
         SDL_GetDisplayName(sourceDisplay) : "full desktop";
@@ -571,9 +756,59 @@ int main(int argc, char **argv)
     bool liveUpdatesSourceRegion = false;
     int liveUpdateX = 0;
     int liveUpdateY = 0;
+#ifdef RAYNEO_HAVE_PORTAL
+    PortalCapture portalCapture;
+    std::vector<PortalFrame> portalFrames;
+    std::vector<GLuint> portalTextures;
+    int centerPortalStream = -1;
+    int rightPortalStream = -1;
+#endif
     if (headTrackingDemoMode)
     {
         std::printf("Head-tracking demo mode enabled; desktop capture is disabled\n");
+    }
+    else if (portalLiveMode)
+    {
+#ifdef RAYNEO_HAVE_PORTAL
+        std::printf("KDE portal live mode enabled; desktop capture is disabled\n");
+        std::printf("KDE portal may restore Samsung access without a dialog, then request Chrome\n");
+        std::string portalError;
+        if (!portalCapture.start(portalError))
+        {
+            std::printf("KDE portal live capture failed: %s\n", portalError.c_str());
+            SDL_Quit();
+            return 1;
+        }
+        portalFrames.resize(portalCapture.streamCount());
+        portalTextures.resize(portalCapture.streamCount(), 0);
+        if (portalCapture.streamCount() != 2)
+        {
+            std::printf("KDE portal needs exactly one monitor and one application window.\n");
+            portalCapture.stop();
+            SDL_Quit();
+            return 1;
+        }
+        for (std::size_t i = 0; i < portalCapture.streamCount(); ++i)
+        {
+            if (portalCapture.sourceType(i) == kPortalMonitorSource)
+                centerPortalStream = static_cast<int>(i);
+            else if (portalCapture.sourceType(i) == kPortalWindowSource)
+                rightPortalStream = static_cast<int>(i);
+        }
+        if (centerPortalStream < 0 || rightPortalStream < 0)
+        {
+            std::printf("KDE portal did not return both a monitor and an application window.\n");
+            portalCapture.stop();
+            SDL_Quit();
+            return 1;
+        }
+        std::printf("KDE portal layout: center stream=%d right stream=%d\n",
+                    centerPortalStream, rightPortalStream);
+#else
+        std::printf("KDE portal live mode is unavailable in this build\n");
+        SDL_Quit();
+        return 1;
+#endif
     }
     else
     {
@@ -630,7 +865,11 @@ int main(int argc, char **argv)
     SDL_SetWindowPosition(window, bounds.x, bounds.y);
     SDL_ShowWindow(window);
     SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    if (portalLiveMode)
+        SDL_SetWindowAlwaysOnTop(window, SDL_TRUE);
     SDL_ShowCursor(SDL_DISABLE);
+    if (portalLiveMode && SDL_SetRelativeMouseMode(SDL_TRUE) != 0)
+        std::printf("Could not confine the RayNeo cursor: %s\n", SDL_GetError());
     SDL_GLContext glctx = SDL_GL_CreateContext(window);
     if (!glctx)
     {
@@ -659,11 +898,18 @@ int main(int argc, char **argv)
 
     int width = 0, height = 0;
     SDL_GetWindowSize(window, &width, &height);
-    GLuint desktopTexture = headTrackingDemoMode ? 0 : uploadDesktop(desktop);
+#ifdef RAYNEO_HAVE_PORTAL
+    WaylandInputRegion waylandInput;
+    const bool haveWaylandInputRegion = portalLiveMode && waylandInput.init(window);
+    if (portalLiveMode && !haveWaylandInputRegion)
+        std::printf("Could not enable direct Chrome clicks through the RayNeo viewer\n");
+#endif
+    GLuint desktopTexture = (headTrackingDemoMode || portalLiveMode) ? 0 : uploadDesktop(desktop);
+    uint64_t portalFrameCount = 0;
 
     LiveCapture liveCapture;
     std::thread liveCaptureThread;
-    if (!headTrackingDemoMode)
+    if (!headTrackingDemoMode && !portalLiveMode)
     {
         liveCaptureThread = std::thread([&]() {
             std::printf("Live desktop capture started; updating the %s region\n", sourceName);
@@ -731,11 +977,12 @@ int main(int argc, char **argv)
 
     const float extraMonitorWidth = static_cast<float>(width);
     const float desktopX = extraMonitorWidth;
-    const float canvasWidth = headTrackingDemoMode ? static_cast<float>(width) * 3.0f :
+    const float canvasWidth = (headTrackingDemoMode || portalLiveMode) ?
+                               static_cast<float>(width) * 3.0f :
                                (pinnedSourceMode ? static_cast<float>(desktop.width) :
                                 desktopX + static_cast<float>(desktop.width));
     const float canvasHeight = static_cast<float>(height) * 3.0f;
-    const float desktopY = headTrackingDemoMode ? static_cast<float>(height) :
+    const float desktopY = (headTrackingDemoMode || portalLiveMode) ? static_cast<float>(height) :
                             (canvasHeight - desktop.height) * 0.5f;
     glViewport(0, 0, width, height);
     glMatrixMode(GL_PROJECTION);
@@ -770,6 +1017,16 @@ int main(int argc, char **argv)
     uint32_t pendingWorkspaceSince = 0;
     int pendingWorkspaceSlot = -1;
     int failedWorkspaceSlot = -1;
+    int mouseX = width / 2;
+    int mouseY = height / 2;
+    uint32_t suppressInjectedMotionUntil = 0;
+    bool portalPointerDirty = portalLiveMode;
+    int pendingPortalButton = 0;
+    bool pendingPortalButtonPressed = false;
+#ifdef RAYNEO_HAVE_PORTAL
+    bool portalPassthrough = false;
+    bool portalChromePanelActive = false;
+#endif
     while (running && !stopRequested)
     {
         SDL_Event event{};
@@ -783,7 +1040,8 @@ int main(int argc, char **argv)
             else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_c)
             {
                 DesktopImage refreshed;
-                if (!headTrackingDemoMode && captureDesktop(refreshed, "--fullscreen"))
+                if (!headTrackingDemoMode && !portalLiveMode &&
+                    captureDesktop(refreshed, "--fullscreen"))
                 {
                     if (cropSourceDisplay)
                     {
@@ -798,6 +1056,57 @@ int main(int argc, char **argv)
                     std::printf("Live desktop frame refreshed\n");
                 }
             }
+            else if (event.type == SDL_MOUSEMOTION)
+            {
+                const bool injectedMotion = portalLiveMode &&
+                    SDL_GetTicks() < suppressInjectedMotionUntil;
+                if (injectedMotion)
+                {
+                    // RemoteDesktop pointer injection is echoed by SDL as a
+                    // mouse event. Do not feed that synthetic event back into
+                    // the viewer pointer position.
+                    continue;
+                }
+                if (portalPassthrough)
+                {
+                    waylandInput.setInteractive(true);
+                    SDL_ShowCursor(SDL_DISABLE);
+                    SDL_SetRelativeMouseMode(SDL_TRUE);
+                    portalPassthrough = false;
+                    portalChromePanelActive = true;
+                    mouseX = event.motion.x;
+                    mouseY = event.motion.y;
+                }
+                else if (portalLiveMode && SDL_GetRelativeMouseMode())
+                {
+                    mouseX = std::max(0, std::min(width - 1, mouseX + event.motion.xrel));
+                    mouseY = std::max(0, std::min(height - 1, mouseY + event.motion.yrel));
+                }
+                else
+                {
+                    mouseX = event.motion.x;
+                    mouseY = event.motion.y;
+                }
+                portalPointerDirty = true;
+            }
+            else if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP)
+            {
+                if (!portalLiveMode || !SDL_GetRelativeMouseMode())
+                {
+                    mouseX = event.button.x;
+                    mouseY = event.button.y;
+                }
+                portalPointerDirty = true;
+                if (event.button.button == SDL_BUTTON_LEFT)
+                    pendingPortalButton = 272;
+                else if (event.button.button == SDL_BUTTON_RIGHT)
+                    pendingPortalButton = 273;
+                else if (event.button.button == SDL_BUTTON_MIDDLE)
+                    pendingPortalButton = 274;
+                else
+                    pendingPortalButton = 0;
+                pendingPortalButtonPressed = event.type == SDL_MOUSEBUTTONDOWN;
+            }
         }
 
         DesktopImage liveFrame;
@@ -811,6 +1120,22 @@ int main(int argc, char **argv)
         }
         if (!liveFrame.pixels.empty())
             applyLiveFrame(liveFrame);
+
+#ifdef RAYNEO_HAVE_PORTAL
+        if (portalLiveMode)
+        {
+            for (std::size_t i = 0; i < portalFrames.size(); ++i)
+            {
+                PortalFrame frame;
+                if (portalCapture.takeFrame(i, frame))
+                {
+                    portalFrames[i] = std::move(frame);
+                    uploadPortalFrame(portalTextures[i], portalFrames[i]);
+                    ++portalFrameCount;
+                }
+            }
+        }
+#endif
 
         RAYNEO_Event eventData{};
         while (Rayneo_PollEvent(ctx, &eventData, 0) == RAYNEO_OK)
@@ -948,6 +1273,95 @@ int main(int argc, char **argv)
             viewY = maxOffsetY * (0.5f + normalizedPitch * 0.5f);
         }
 
+#ifdef RAYNEO_HAVE_PORTAL
+        int portalPointerStream = -1;
+        if (portalLiveMode)
+        {
+            const float virtualX = viewX + mouseX;
+            const float virtualY = viewY + mouseY;
+            const bool pointerOnChromePanel = virtualY >= height && virtualY < height * 2.0f &&
+                                              virtualX >= width * 2.0f && virtualX < width * 3.0f;
+            if (haveWaylandInputRegion && pointerOnChromePanel && !portalChromePanelActive &&
+                !portalPassthrough)
+            {
+                SDL_SetRelativeMouseMode(SDL_FALSE);
+                waylandInput.setInteractive(false, height);
+                SDL_ShowCursor(SDL_ENABLE);
+                portalPassthrough = true;
+                std::printf("Chrome input enabled; look back to Samsung to return to the RayNeo pointer\n");
+            }
+            if (!pointerOnChromePanel)
+            {
+                if (portalPassthrough)
+                {
+                    waylandInput.setInteractive(true);
+                    SDL_ShowCursor(SDL_DISABLE);
+                    SDL_SetRelativeMouseMode(SDL_TRUE);
+                    portalPassthrough = false;
+                    portalPointerDirty = true;
+                    std::printf("RayNeo pointer restored\n");
+                }
+                portalChromePanelActive = false;
+            }
+            else
+                portalChromePanelActive = true;
+            const PortalFrame *monitorFrame = centerPortalStream >= 0 ?
+                &portalFrames[static_cast<std::size_t>(centerPortalStream)] : nullptr;
+            const PortalFrame *pointerFrame = nullptr;
+            SDL_Rect pointerBounds{};
+            float panelX = 0.0f;
+            if (virtualY >= height && virtualY < height * 2.0f)
+            {
+                if (virtualX >= width && virtualX < width * 2.0f)
+                {
+                    portalPointerStream = centerPortalStream;
+                    pointerFrame = monitorFrame;
+                    pointerBounds = displayBounds[static_cast<std::size_t>(sourceDisplay)];
+                    panelX = static_cast<float>(width);
+                }
+                else if (virtualX >= width * 2.0f && virtualX < width * 3.0f)
+                {
+                    portalPointerStream = centerPortalStream;
+                    pointerFrame = monitorFrame;
+                    pointerBounds = displayBounds[static_cast<std::size_t>(targetDisplay)];
+                    panelX = static_cast<float>(width) * 2.0f;
+                }
+            }
+            if (portalPointerDirty && portalPointerStream >= 0 && pointerFrame != nullptr)
+            {
+                const int logicalWidth = pointerFrame->logicalWidth > 0 ?
+                    pointerFrame->logicalWidth : pointerFrame->width;
+                const int logicalHeight = pointerFrame->logicalHeight > 0 ?
+                    pointerFrame->logicalHeight : pointerFrame->height;
+                if (logicalWidth > 0 && logicalHeight > 0)
+                {
+                    double x = (virtualX - panelX) * logicalWidth / width;
+                    double y = (virtualY - height) * logicalHeight / height;
+                    if (pointerFrame == monitorFrame)
+                    {
+                        const int desktopWidth = virtualRight - virtualLeft;
+                        const int desktopHeight = virtualBottom - virtualTop;
+                        if (desktopWidth <= 0 || desktopHeight <= 0)
+                            continue;
+                        x = (pointerBounds.x - virtualLeft +
+                             (virtualX - panelX) * pointerBounds.w / width) *
+                            logicalWidth / desktopWidth;
+                        y = (pointerBounds.y - virtualTop +
+                             (virtualY - height) * pointerBounds.h / height) *
+                            logicalHeight / desktopHeight;
+                    }
+                    portalCapture.movePointerAbsolute(
+                        static_cast<std::size_t>(portalPointerStream), x, y);
+                    suppressInjectedMotionUntil = SDL_GetTicks() + 100;
+                }
+            }
+            if (pendingPortalButton != 0 && portalPointerStream >= 0)
+                portalCapture.pointerButton(pendingPortalButton, pendingPortalButtonPressed);
+            portalPointerDirty = false;
+            pendingPortalButton = 0;
+        }
+#endif
+
         glClearColor(0.02f, 0.02f, 0.02f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         glMatrixMode(GL_MODELVIEW);
@@ -955,6 +1369,33 @@ int main(int argc, char **argv)
         glTranslatef(-viewX, -viewY, 0);
         if (headTrackingDemoMode)
             drawHeadTrackingPanels(width, height);
+#ifdef RAYNEO_HAVE_PORTAL
+        else if (portalLiveMode)
+        {
+            if (centerPortalStream >= 0)
+            {
+                const PortalFrame &centerFrame = portalFrames[static_cast<std::size_t>(centerPortalStream)];
+                float sourceLeft = 0.0f;
+                float sourceRight = 1.0f;
+                const SDL_Rect &sourceBounds = displayBounds[static_cast<std::size_t>(sourceDisplay)];
+                if (centerFrame.logicalWidth > sourceBounds.w && sourceBounds.w > 0)
+                {
+                    sourceLeft = static_cast<float>(sourceBounds.x - virtualLeft) / centerFrame.logicalWidth;
+                    sourceRight = sourceLeft + static_cast<float>(sourceBounds.w) / centerFrame.logicalWidth;
+                }
+                drawPortalScreen(portalTextures[static_cast<std::size_t>(centerPortalStream)],
+                                 centerFrame,
+                                 static_cast<float>(width), static_cast<float>(height),
+                                 static_cast<float>(width), static_cast<float>(height),
+                                 sourceLeft, sourceRight);
+            }
+            if (rightPortalStream >= 0)
+                drawPortalScreen(portalTextures[static_cast<std::size_t>(rightPortalStream)],
+                                 portalFrames[static_cast<std::size_t>(rightPortalStream)],
+                                 static_cast<float>(width) * 2.0f, static_cast<float>(height),
+                                 static_cast<float>(width), static_cast<float>(height));
+        }
+#endif
         else if (kdeWorkspaceMode || kdeTwoWorkspaceMode)
             drawCapturedScreen(desktopTexture, static_cast<float>(width),
                                static_cast<float>(desktop.width),
@@ -984,7 +1425,8 @@ int main(int argc, char **argv)
             const Orientation &o = tracker.orientation();
             std::printf("viewport samples=%llu live=%llu yaw=%.1f pitch=%.1f roll=%.1f viewX=%.0f viewY=%.0f calibrated=%s\n",
                         static_cast<unsigned long long>(samples),
-                        static_cast<unsigned long long>(liveCapture.frames.load()),
+                        static_cast<unsigned long long>(portalLiveMode ? portalFrameCount :
+                                                        liveCapture.frames.load()),
                         o.yaw * 57.2958f, o.pitch * 57.2958f, o.roll * 57.2958f,
                         viewX, viewY, tracker.calibrated() ? "yes" : "no");
             lastReport = now;
@@ -999,8 +1441,23 @@ int main(int argc, char **argv)
         switchKdeDesktop(centerDesktop);
     Rayneo_DisableImu(ctx);
     Rayneo_Destroy(ctx);
+#ifdef RAYNEO_HAVE_PORTAL
+    if (portalLiveMode)
+    {
+        for (GLuint texture : portalTextures)
+        {
+            if (texture != 0)
+                glDeleteTextures(1, &texture);
+        }
+        portalCapture.stop();
+    }
+#endif
     if (desktopTexture != 0)
         glDeleteTextures(1, &desktopTexture);
+#ifdef RAYNEO_HAVE_PORTAL
+    waylandInput.reset();
+#endif
+    SDL_SetRelativeMouseMode(SDL_FALSE);
     SDL_ShowCursor(SDL_ENABLE);
     SDL_GL_DeleteContext(glctx);
     SDL_DestroyWindow(window);

@@ -8,46 +8,49 @@ while [[ -L "$script_path" ]]; do
     [[ "$script_path" == /* ]] || script_path="$script_dir/$script_path"
 done
 repo_dir=$(cd -P -- "$(dirname -- "$script_path")" && pwd)
-viewer="$repo_dir/build/examples/pinned_viewport/RayNeoPinnedViewport"
+imu_example="$repo_dir/build/examples/simple/RayNeoExample"
+demo="$repo_dir/build/examples/pinned_viewport/RayNeoPinnedViewport"
 
-mode=--headtracking
+mode=imu
 if [[ "${1:-}" == "--live" ]]; then
-    mode=--pinned-source
+    mode=live
+    shift
+elif [[ "${1:-}" == "--demo" ]]; then
+    mode=demo
     shift
 fi
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'EOF'
-Start the RayNeo Air 4 Pro head-tracking demo.
+Check the RayNeo Air 4 Pro IMU without changing your desktop.
 
 Usage:
   ./run-rayneo
   ./run-rayneo --live
+  ./run-rayneo --demo
 
-After a reboot this command checks the Wayland/KDE session, checks/builds the
-viewer, pins it to the RayNeo output without changing KDE desktops, and starts
-an immediate synthetic head-tracking scene. Use --live for the experimental
-source-monitor capture mode.
+With no option, this command only prints live IMU readings in the terminal.
+It does not create a window, capture either monitor, alter KDE settings, or
+cover applications on the RayNeo display.
+
+Use --demo only for the coloured head-tracking test. It intentionally opens a
+fullscreen window on the RayNeo display, so do not use it while Chrome or any
+other application is meant to be visible in the glasses.
+
+Use --live for the live Samsung + Chrome path. KDE may show one or two Share
+dialogs: if it shows a monitor picker, choose Samsung; it may already be
+remembered. Then choose Chrome. Do not select SmartGlasses or New Virtual
+Output. Keep Chrome open; its physical display location does not matter.
 EOF
     exit 0
 fi
 
 if [[ $# -ne 0 ]]; then
-    echo "Usage: ./run-rayneo [--live]" >&2
+    echo "Usage: ./run-rayneo [--live|--demo]" >&2
     exit 2
 fi
 
-if [[ "${XDG_SESSION_TYPE:-}" != "wayland" ]]; then
-    echo "This viewer needs a KDE Wayland session (XDG_SESSION_TYPE=wayland)." >&2
-    echo "Current session: ${XDG_SESSION_TYPE:-not set}" >&2
-    exit 1
-fi
-
-required_commands=(cmake qdbus6)
-if [[ "$mode" == "--pinned-source" ]]; then
-    required_commands+=(spectacle)
-fi
-for command_name in "${required_commands[@]}"; do
+for command_name in cmake; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Required command not found: $command_name" >&2
         exit 1
@@ -79,31 +82,57 @@ else
     echo "Warning: lsusb is not installed; USB detection will be checked by the SDK."
 fi
 
-echo "Building/checking the RayNeo viewer..."
-if [[ ! -x "$viewer" ]]; then
+target=RayNeoExample
+binary="$imu_example"
+if [[ "$mode" == demo || "$mode" == live ]]; then
+    target=RayNeoPinnedViewport
+    binary="$demo"
+fi
+
+echo "Building/checking $target..."
+if [[ ! -f "$repo_dir/build/CMakeCache.txt" ]]; then
     cmake -B "$repo_dir/build" \
         -DRAYNEO_BUILD_EXAMPLES=ON \
         -DRAYNEO_BUILD_OPENVR_DRIVER=OFF
-    cmake --build "$repo_dir/build" -j"$(nproc)"
-elif [[ "$repo_dir/examples/pinned_viewport/main.cpp" -nt "$viewer" ||
-        "$repo_dir/src/RayneoApi.cpp" -nt "$viewer" ]]; then
-    echo "Source changed; rebuilding the viewer."
-    cmake --build "$repo_dir/build" -j"$(nproc)"
-else
-    echo "Viewer already built; skipping rebuild."
 fi
+cmake --build "$repo_dir/build" --target "$target" -j"$(nproc)"
 
-if [[ ! -x "$viewer" ]]; then
-    echo "Viewer was not produced: $viewer" >&2
+if [[ ! -x "$binary" ]]; then
+    echo "$target was not produced: $binary" >&2
     exit 1
 fi
 
-echo "Enabling RayNeo output pinning without changing KDE desktops..."
-"$repo_dir/tools/enable-rayneo-kwin-sticky.sh"
-if [[ "$mode" == "--pinned-source" ]]; then
-    echo "Starting experimental live source-monitor mode. Keep the glasses still during calibration."
+if [[ "$mode" == live ]]; then
+    echo "Starting the live Samsung + Chrome RayNeo viewer."
+    echo "KDE may restore Samsung automatically; choose it if a monitor picker appears."
+    echo "Then select the Chrome window in the Share dialog."
+    echo "Do not select SmartGlasses or New Virtual Output."
+    echo "Keep Chrome open; its physical display location does not matter."
+    keep_above_script="$repo_dir/tools/rayneo-keep-above.js"
+    keep_above_name="rayneo_keep_above"
+    cleanup_keep_above() {
+        qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript \
+            "$keep_above_name" >/dev/null 2>&1 || true
+    }
+    if command -v qdbus6 >/dev/null 2>&1 && [[ -f "$keep_above_script" ]]; then
+        cleanup_keep_above
+        qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript \
+            "$keep_above_script" "$keep_above_name" >/dev/null
+        qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.start >/dev/null
+        trap cleanup_keep_above EXIT INT TERM
+    fi
+    set +e
+    env SDL_VIDEODRIVER=wayland "$binary" --portal-live
+    viewer_status=$?
+    set -e
+    exit "$viewer_status"
+elif [[ "$mode" == demo ]]; then
+    echo "Starting the coloured head-tracking demo."
+    echo "Warning: this covers the RayNeo display until you exit it."
+    exec env SDL_VIDEODRIVER=wayland "$binary" --headtracking
 else
-    echo "Starting head-tracking-only mode. Keep the glasses still during calibration."
+    echo "Normal display mode: KDE stays in control of the Samsung and RayNeo outputs."
+    echo "Move Chrome to the RayNeo display in KDE Display Configuration as with any second monitor."
+    echo "Starting the 10-second IMU check; it does not open a window."
+    exec "$binary"
 fi
-
-exec env SDL_VIDEODRIVER=wayland "$viewer" "$mode"

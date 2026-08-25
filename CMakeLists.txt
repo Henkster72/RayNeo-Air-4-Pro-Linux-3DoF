@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(RayNeo VERSION 1.0 LANGUAGES C CXX)
+project(RayNeo VERSION 0.1.1 LANGUAGES C CXX)
 
 # Enable modern RPATH behavior on macOS
 set(CMAKE_MACOSX_RPATH ON)

@@ -16,6 +16,17 @@ target_link_libraries(RayNeoPinnedViewport PRIVATE
 )
 target_compile_definitions(RayNeoPinnedViewport PRIVATE SDL_MAIN_HANDLED)
 
+if (UNIX AND NOT APPLE)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(PipeWire REQUIRED IMPORTED_TARGET libpipewire-0.3)
+    pkg_check_modules(Gio REQUIRED IMPORTED_TARGET gio-2.0)
+    pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
+    target_sources(RayNeoPinnedViewport PRIVATE portal_capture.cpp)
+    target_link_libraries(RayNeoPinnedViewport PRIVATE PkgConfig::PipeWire PkgConfig::Gio
+                          PkgConfig::WaylandClient)
+    target_compile_definitions(RayNeoPinnedViewport PRIVATE RAYNEO_HAVE_PORTAL=1)
+endif()
+
 rayneo_deploy_runtime(RayNeoPinnedViewport)
 
 if (APPLE)

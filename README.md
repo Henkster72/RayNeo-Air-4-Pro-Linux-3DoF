@@ -1,6 +1,8 @@
 # RayNeo Air 4 Pro Linux 3DoF
 
-Native Linux experimentation for using compatible **RayNeo glasses** as a low-latency 3DoF head-tracked display. The project is based on the upstream [RayNeo SDK](https://github.com/verncat/RayNeo-Air-3S-Pro-OpenVR), with Air 4 Pro support and a lightweight Wayland desktop viewport added locally.
+Release: `v0.1.1`
+
+Native Linux experimentation for using compatible **RayNeo glasses** as a normal second display with verified Air 4 Pro IMU access. The project is based on the upstream [RayNeo SDK](https://github.com/verncat/RayNeo-Air-3S-Pro-OpenVR), with Air 4 Pro support and a small 3DoF visual test added locally.
 
 This is a working prototype, not a complete OpenXR, Monado, SteamVR, or Linux compositor implementation.
 
@@ -53,11 +55,12 @@ sudo apt install -y \
   build-essential cmake pkg-config \
   libusb-1.0-0-dev \
   libsdl2-dev libsdl2-ttf-dev \
-  libgl1-mesa-dev
+  libgl1-mesa-dev \
+  libpipewire-0.3-dev libspa-0.2-dev
 ```
 
-Desktop capture is optional and is only used by the experimental `--live`
-mode.
+The SDL/OpenGL packages are only needed for the optional coloured `--demo`
+test. The normal second-display setup does not capture the desktop.
 
 ### 3. Download the project
 
@@ -88,9 +91,25 @@ cmake -B build \
 cmake --build build -j"$(nproc)"
 ```
 
-### 5. Start it after a reboot
+### 5. Use the RayNeo as your normal second display
 
-Use this one command from the project directory:
+In **System Settings → Display & Monitor → Display Configuration**:
+
+1. Enable the RayNeo display.
+2. Choose **Extend**; do not mirror the Samsung monitor.
+3. Place RayNeo to the right of the Samsung monitor.
+4. Apply the layout.
+
+Now move Chrome, YouTube, or any other window to the RayNeo display exactly
+as you would with any ordinary second monitor. It is live and interactive
+without this project running.
+
+Do **not** start a viewport, capture, portal, or virtual-desktop tool for this
+normal setup: such a tool draws over the RayNeo display and hides your app.
+
+### 6. Verify the IMU without changing either display
+
+Use this command from the project directory:
 
 ```bash
 ./run-rayneo
@@ -104,44 +123,33 @@ terminal, install the project-local launcher once:
 rayneo
 ```
 
-It checks that the glasses are connected, checks/builds the viewer, pins the
-RayNeo window to the glasses output and starts the head-tracking-only demo.
-It does not capture the desktop or change KDE virtual desktops.
-
-Use `rayneo` for the immediate colored-panel test. Use `rayneo --live` only
-when you explicitly want the slower experimental capture of the Samsung/source
-monitor. Live mode refreshes the source monitor and preserves the initial
-RayNeo-side image as a snapshot, because the RayNeo output is covered by the
-viewport while the program is running. It is visual-only: the viewport hides
-its own cursor and does not yet forward mouse clicks to captured applications.
+The default `rayneo` command prints ten seconds of live IMU samples in the
+terminal. It does not open a window, capture a monitor, alter KDE settings, or
+cover the RayNeo display.
 
 The normal layout is deliberately simple:
 
 ```text
-Samsung/source monitor = your normal desktop
-RayNeo = the head-tracked viewport
+Samsung = your normal desktop
+RayNeo  = your normal second display, placed to the right
 ```
 
-The head-tracking demo renders colored reference panels directly. There is no
-5120x1440 desktop capture, no duplicated Samsung image, and no Center/Right
-workspace switching.
-Keep the glasses still for the first second while it says `Gyro calibrated`.
+Move the glasses and confirm that `acc`, `gyro(dps)`, and `tick` change. This
+proves that the USB IMU is working while your normal second display remains
+usable.
 
-Press `R` to recenter, `C` to refresh the capture immediately, or `Esc` to
-quit. `Ctrl+C` in the terminal also exits.
+### 7. Optional: coloured 3DoF tracking test
 
-### 6. Optional: start the head-tracking demo manually
-
-Use the native Wayland backend:
+Run this only when no application needs to remain visible in the RayNeo
+glasses:
 
 ```bash
-SDL_VIDEODRIVER=wayland \
-  build/examples/pinned_viewport/RayNeoPinnedViewport --headtracking
+rayneo --demo
 ```
 
-This mode renders synthetic colored panels at the display rate. It is the
-recommended first test because it isolates USB IMU, orientation, recentering,
-and RayNeo output placement from desktop capture.
+It intentionally opens a fullscreen coloured-panel test on the RayNeo output.
+It proves yaw, pitch, roll, calibration, and `R` recentering, but it is not a
+desktop viewer and it is not meant to run alongside Chrome.
 
 Keep the glasses still for the first second. The program will print:
 
@@ -159,12 +167,39 @@ Now test the movement:
 
 `Ctrl+C` in the terminal also exits cleanly.
 
-The captured image deliberately excludes the mouse pointer. Wayland already draws the real compositor pointer, and including a second captured pointer would show two cursors. Pointer routing into the synthetic canvas is not implemented yet.
-
 Do not use `SDL_VIDEODRIVER=x11` in a Wayland session. Xwayland may put the
 viewport on the source monitor instead of the RayNeo output.
 
-### 7. Manual workspace setup and troubleshooting
+### 8. Live Samsung + Chrome viewport
+
+`rayneo --live` provides the experimental live viewport:
+
+```bash
+./run-rayneo --live
+```
+
+Keep Chrome open. KDE may show one or two Share dialogs: if a monitor picker
+appears, choose the Samsung monitor; then choose the Chrome window. KDE may
+restore the Samsung permission silently. Do not select SmartGlasses or New
+Virtual Output.
+
+Look straight ahead for the Samsung view and turn right for Chrome. Chrome
+clicks are passed through to the selected window, and the viewer is kept above
+Chrome so its image does not become stuck after interaction. Hold the glasses
+still during calibration. Press `Ctrl+C` to stop the viewer.
+
+This mode requires KDE Plasma Wayland with the ScreenCast and RemoteDesktop
+portals, PipeWire, and a physical RayNeo display output. It does not create or
+modify KDE virtual desktops.
+
+## Experimental code not part of the normal setup
+
+The repository still contains earlier experimental desktop-capture and KDE
+workspace code for development reference. It is not part of the `rayneo`
+launcher, does not provide a reliable interactive virtual desktop, and should
+not be used for a Samsung + RayNeo extended-display setup.
+
+### Archived workspace notes
 
 The old experimental workspace mode uses two KDE workspaces:
 
@@ -192,7 +227,7 @@ Keep your head centered during calibration. Looking right activates the live
 `Right` workspace; returning near center activates `Center`. This is a
 workspace switch, not a fake second physical monitor.
 
-### 8. Optional advanced 3x3 workspace grid
+### 9. Optional advanced 3x3 workspace grid
 
 The normal viewport above is a visual panning test. It does not create a real
 second monitor. For live KDE workspaces, first create a 3x3 Plasma workspace
@@ -288,7 +323,7 @@ is still a prototype and is slower than a native PipeWire stream. Mouse and
 keyboard routing from the RayNeo window into the active source workspace is
 also not implemented yet.
 
-### 9. Optional: test the IMU first
+### 10. Optional: test the IMU first
 
 If you want to confirm the glasses before starting the viewport:
 
@@ -327,7 +362,7 @@ sudo udevadm trigger
 
 Log out and in once after adding yourself to the group.
 
-### The viewport appears on the wrong monitor
+### The coloured demo appears on the wrong monitor
 
 Confirm that the command includes:
 
@@ -345,17 +380,6 @@ RAYNEO_DISPLAY=1 ./run-rayneo
 
 `RAYNEO_DISPLAY` accepts either a display index or a substring of its name.
 
-### The desktop image is old or updates slowly
-
-The prototype refreshes the selected source-monitor region with repeated KDE
-Spectacle captures. This is live, but it is not yet a low-latency PipeWire
-video stream. Press `C` for an immediate refresh. The terminal's `live=`
-counter shows how many background frames have been captured.
-
-### The image is dark above or below the screen
-
-That is intentional when looking far up or down: the captured physical screen is finite, so it can move completely outside the virtual viewport.
-
 ## What works
 
 - RayNeo Air 4 Pro detection over USB (`1bbb:af50`), with configurable VID/PID
@@ -364,11 +388,11 @@ That is intentional when looking far up or down: the captured physical screen is
 - Quaternion-based gyro orientation tracking
 - Stable yaw, pitch, and roll after stationary calibration
 - `R` recentering
-- Native Wayland output selection for the RayNeo display
-- A synthetic pinned viewport driven by head yaw and pitch
-- Live source-monitor refresh through KDE Spectacle
-- An additional visual monitor region to the left of the captured source display
-- Experimental switching between real KDE workspaces using head pose
+- RayNeo as a normal, live KDE extended display beside the primary monitor
+- A synthetic coloured head-tracking demo driven by yaw and pitch
+- Live Samsung monitor and Chrome window capture through KDE PipeWire portals
+- Chrome pointer/click forwarding with KWin stacking protection
+- Gravity-assisted pitch and roll correction to prevent vertical drift
 
 ## Tested setup
 
@@ -383,38 +407,30 @@ Source monitor: 2560x1440
 RayNeo output: 2560x1440
 ```
 
-The RayNeo is connected as a normal DisplayPort monitor. The viewport selects the native Wayland output named `Technical Concepts Ltd SmartGlasses`. X11/Xwayland is not recommended for the viewport because the compositor may place fullscreen windows on the primary monitor.
+The RayNeo is connected as a normal DisplayPort monitor. In the tested layout,
+KDE places it directly to the right of the source monitor. Chrome is moved to
+it as a normal application window; no RayNeo program needs to be running.
 
-## Viewport behavior
+## Coloured demo behaviour
 
-The default head-tracking demo renders a 3x3 colored reference grid. The
-experimental pinned-source mode captures the complete desktop, extracts the
-first non-RayNeo output as the source monitor, and refreshes that region in the
-background. Its canvas is:
-
-```text
-[ duplicated source region ][ captured source ][ captured right-hand region ]
-```
-
-The captured screen is centered at the neutral head pose. Yaw moves horizontally through this canvas. Pitch moves vertically through a taller virtual space; a strong look up or down moves the finite captured screen out of view.
-
-The extra monitor is currently a visual duplicate inside the OpenGL canvas. It is not a real KDE output, so applications cannot be launched or interacted with on that region yet.
+`rayneo --demo` renders a 3x3 coloured reference grid on the RayNeo output.
+Yaw moves the grid horizontally and pitch moves it vertically. It is a hardware
+and orientation test only; it deliberately replaces whatever is normally on
+the RayNeo display until it exits.
 
 Controls:
 
 - `R` — recenter; hold the glasses still for one second
-- `C` — refresh the desktop capture in pinned-source mode
 - `Esc` — exit
 
 ## Current limitations
 
-- Experimental live capture refreshes through repeated Spectacle screenshots, not a continuous PipeWire/KDE screencopy stream. It is intentionally not part of the default head-tracking command.
-- The extra visual monitor currently duplicates the captured source region rather than providing an independent workspace.
-- The viewport does not yet route keyboard or mouse input to a synthetic monitor region.
-- The extra visual region is not a real Wayland/KDE output and cannot host application windows.
-- KDE workspace mode changes the live workspace, but still refreshes the RayNeo texture through Spectacle screenshots.
-- KDE workspace mode does not yet forward RayNeo mouse clicks or keyboard input to the active workspace.
-- Orientation is gyro-based and can drift during long sessions.
+- The live viewport is currently tuned for one Samsung-class source monitor and
+  one Chrome window on KDE Plasma Wayland.
+- KDE’s portal picker may show one or two dialogs depending on remembered
+  permissions; it must return one monitor stream and one window stream.
+- The live viewport is a focused two-panel experience, not a general spatial
+  compositor or arbitrary multi-window desktop.
 - Pitch and yaw sensitivity are currently tuned for the tested 2560x1440 source monitor / RayNeo setup.
 - No positional 6DoF tracking is implemented.
 - No OpenXR, Monado, SteamVR, or full virtual-desktop compositor integration is required or included yet.
