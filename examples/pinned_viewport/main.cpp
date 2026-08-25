@@ -423,15 +423,19 @@ int main(int argc, char **argv)
 
     bool kdeWorkspaceMode = false;
     bool kdeTwoWorkspaceMode = false;
+    bool pinnedSourceMode = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--kde-workspaces") == 0)
             kdeWorkspaceMode = true;
         else if (std::strcmp(argv[i], "--kde-two-workspaces") == 0)
             kdeTwoWorkspaceMode = true;
+        else if (std::strcmp(argv[i], "--pinned-source") == 0)
+            pinnedSourceMode = true;
         else if (std::strcmp(argv[i], "--help") == 0)
         {
-            std::printf("Usage: %s [--kde-two-workspaces|--kde-workspaces]\n", argv[0]);
+            std::printf("Usage: %s [--pinned-source|--kde-two-workspaces|--kde-workspaces]\n", argv[0]);
+            std::printf("  --pinned-source       track a cropped source monitor without switching KDE desktops\n");
             std::printf("  --kde-two-workspaces  switch Center/Right KDE workspaces\n");
             std::printf("  --kde-workspaces       switch the advanced 3x3 KDE grid\n");
             return 0;
@@ -517,7 +521,7 @@ int main(int argc, char **argv)
         SDL_Quit();
         return 1;
     }
-    const bool cropSourceDisplay = kdeWorkspaceMode || kdeTwoWorkspaceMode;
+    const bool cropSourceDisplay = pinnedSourceMode || kdeWorkspaceMode || kdeTwoWorkspaceMode;
     const char *sourceName = sourceDisplay >= 0 ?
         SDL_GetDisplayName(sourceDisplay) : "full desktop";
     if (cropSourceDisplay)
@@ -672,6 +676,8 @@ int main(int argc, char **argv)
     if (kdeTwoWorkspaceMode)
         std::printf("KDE two-workspace mode enabled; center desktop %d, right desktop %d\n",
                     centerDesktop, centerDesktop + 1);
+    if (pinnedSourceMode)
+        std::printf("Pinned source-monitor mode enabled; KDE desktops will not be switched\n");
     bool running = true;
     uint64_t samples = 0;
     double lastReport = 0;

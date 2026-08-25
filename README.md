@@ -105,16 +105,15 @@ rayneo
 ```
 
 It checks that the glasses are connected, checks/builds the viewer,
-restores the simple KDE layout, reloads the small KWin integration, and starts
-the RayNeo viewer. This is the normal command to use every time after logging
-in or rebooting.
+pins the RayNeo window to the glasses output and starts the viewer without
+changing your KDE virtual desktops. This is the normal command to use every
+time after logging in or rebooting.
 
 The normal layout is deliberately simple:
 
 ```text
-Center = your normal source-monitor desktop
-Right  = a live Chrome/YouTube desktop
-RayNeo = the head-tracked viewer
+Samsung/source monitor = your normal desktop
+RayNeo = the head-tracked viewport
 ```
 
 Seeing `Captured combined desktop framebuffer: 5120x1440` in the terminal is
@@ -123,11 +122,10 @@ normal when two 2560x1440 outputs are connected. KDE exposes them as one
 crops that capture back to the selected source monitor, so the RayNeo texture is
 2560x1440 rather than a split 5120-pixel image.
 
-For the first setup, leave Chrome/YouTube open. The launcher places existing
-Chrome/Chromium windows on the source monitor of the `Right` desktop, then
-returns to `Center` before starting. Looking right selects the live `Right`
-desktop. If Chrome was opened after the launcher, run
-`tools/place-rayneo-browser-right.sh` once.
+The stable launcher does not switch KDE desktops. It keeps the physical
+Samsung desktop stable and tracks a cropped copy of that source monitor inside
+the RayNeo viewport. The old Center/Right workspace experiment remains
+available below, but it changes both physical outputs and is slower.
 Keep the glasses still for the first second while it says `Gyro calibrated`.
 
 Press `R` to recenter, `C` to refresh the capture immediately, or `Esc` to

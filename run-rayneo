@@ -12,13 +12,14 @@ viewer="$repo_dir/build/examples/pinned_viewport/RayNeoPinnedViewport"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<'EOF'
-Start the RayNeo Air 4 Pro two-workspace desktop viewer.
+Start the RayNeo Air 4 Pro pinned-source viewer.
 
 Usage:
   ./run-rayneo
 
 After a reboot this command checks the Wayland/KDE session, checks/builds the
-viewer, restores the Center/Right workspace setup, and starts tracking.
+viewer, pins it to the RayNeo output without changing KDE desktops, and starts
+tracking.
 EOF
     exit 0
 fi
@@ -85,8 +86,8 @@ if [[ ! -x "$viewer" ]]; then
     exit 1
 fi
 
-echo "Preparing KDE Center/Right workspaces..."
-"$repo_dir/tools/setup-kde-two-workspaces.sh"
-echo "Starting RayNeo. Keep the glasses still during calibration."
+echo "Enabling RayNeo output pinning without changing KDE desktops..."
+"$repo_dir/tools/enable-rayneo-kwin-sticky.sh"
+echo "Starting stable pinned-source mode. Keep the glasses still during calibration."
 
-exec env SDL_VIDEODRIVER=wayland "$viewer" --kde-two-workspaces
+exec env SDL_VIDEODRIVER=wayland "$viewer" --pinned-source
